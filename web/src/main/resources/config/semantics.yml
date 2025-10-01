@@ -1,0 +1,66 @@
+semantics:
+  relation-type:
+    - dataverse.related_publication.relation_type.isCitedBy
+    - dataverse.related_publication.relation_type.Cites
+    - dataverse.related_publication.relation_type.IsSupplementTo
+    - dataverse.related_publication.relation_type.IsSupplementedBy
+    - dataverse.related_publication.relation_type.IsContinuedBy
+    - dataverse.related_publication.relation_type.Continues
+    - dataverse.related_publication.relation_type.References
+    - dataverse.related_publication.relation_type.IsReferencedBy
+  identifier-type:
+    - dataverse.related_publication.identifier_type.ark
+    - dataverse.related_publication.identifier_type.arxiv
+    - dataverse.related_publication.identifier_type.bibcode
+    - dataverse.related_publication.identifier_type.cstr
+    - dataverse.related_publication.identifier_type.doi
+    - dataverse.related_publication.identifier_type.ean13
+    - dataverse.related_publication.identifier_type.eissn
+    - dataverse.related_publication.identifier_type.handle
+    - dataverse.related_publication.identifier_type.isbn
+    - dataverse.related_publication.identifier_type.issn
+    - dataverse.related_publication.identifier_type.istc
+    - dataverse.related_publication.identifier_type.lissn
+    - dataverse.related_publication.identifier_type.lsid
+    - dataverse.related_publication.identifier_type.pmid
+    - dataverse.related_publication.identifier_type.purl
+    - dataverse.related_publication.identifier_type.upc
+    - dataverse.related_publication.identifier_type.url
+    - dataverse.related_publication.identifier_type.urm
+    - dataverse.related_publication.identifier_type.DASH-NRS
+  contributor-type:
+    - code: dataverse.contributor.type.data_collector
+      value: Data Collector
+    - code: dataverse.contributor.type.data_curator
+      value: Data Curator
+    - code: dataverse.contributor.type.data_manager
+      value: Data Manager
+    - code: dataverse.contributor.type.editor
+      value: Editor
+    - code: dataverse.contributor.type.funder
+      value: Funder
+    - code: dataverse.contributor.type.hosting_institution
+      value: Hosting Institution
+    - code: dataverse.contributor.type.project_leader
+      value: Project Leader
+    - code: dataverse.contributor.type.project_manager
+      value: Project Manager
+    - code: dataverse.contributor.type.project_member
+      value: Project Member
+    - code: dataverse.contributor.type.related_person
+      value: Related Person
+    - code: dataverse.contributor.type.researcher
+      value: Researcher
+    - code: dataverse.contributor.type.research_group
+      value: Research Group
+    - code: dataverse.contributor.type.rights_holder
+      value: Rights Holder
+    - code: dataverse.contributor.type.sponsor
+      value: Sponsor
+    - code: dataverse.contributor.type.supervisor
+      value: Supervisor
+    - code: dataverse.contributor.type.work_package_leader
+      value: Work Package Leader
+    - code: dataverse.contributor.type.other
+      value: Other
+

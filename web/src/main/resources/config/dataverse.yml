@@ -1,0 +1,31 @@
+dataverse:
+  licenseReferenceCode: ${DEPOSIT_DATAVERSE_LICENCES_CODE:licenses}
+  organizationReferenceCode: ${DEPOSIT_DATAVERSE_ORGANIZATIONS_CODE:organisations}
+  funderReferenceCode: ${DEPOSIT_DATAVERSE_FUNDERS_CODE:funders}
+  researcherReferenceCode: ${DEPOSIT_DATAVERSE_RESEARCHERS_CODE:researchers}
+  maxInMemorySizeInBytes: 6554000
+  depositConfiguration:
+    deposit-type: 2
+    repository-id: dataverse
+    access-token: ${DEPOSIT_DATAVERSE_ACCESS_TOKEN}
+    repository-url: ${DEPOSIT_DATAVERSE_URL}
+    repository-authorization-url:
+    repository-record-url: ${DEPOSIT_DATAVERSE_RECORD_URL}
+    repository-access-token-url:
+    repository-client-id:
+    repository-client-secret:
+    redirect-uri:
+    has-logo: ${DEPOSIT_DATAVERSE_HAS_LOGO:true}
+    useSharedStorage: ${DEPOSIT_DATAVERSE_USE_SHARED_STORAGE:false}
+    configuration-fields:
+    user-configuration-fields:
+      - code: dataverse-access-token
+        type: 0
+        label: Access Token
+        authInfo: true
+    auth-methods:
+      - PluginDefault
+      - AuthInfoFromUserProfile
+  alias: ${DEPOSIT_DATAVERSE_HOST}
+  domain: ${OPENCDMP_DOMAIN}
+  logo: ${DEPOSIT_DATAVERSE_LOGO_PATH:classpath:dataverse.png}
