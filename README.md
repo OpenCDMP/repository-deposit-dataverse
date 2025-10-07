@@ -1,70 +1,114 @@
 # Repository Deposit Dataverse for OpenCDMP
 
-**repository-deposit-dataverse** is an implementation of the `repository-deposit-base` package that enables the deposition of **OpenCDMP Plans** into the **Dataverse** repository. This service allows users of the **OpenCDMP** platform to submit their DMPs to Dataverse, minting a **Digital Object Identifier (DOI)** for each plan. The service is built using **Spring Boot** and can be easily integrated with OpenCDMP as a repository deposit option.
+**repository-deposit-dataverse** is an implementation of the [repository-deposit-base](https://github.com/OpenCDMP/repository-deposit-base) package that enables the deposition of **OpenCDMP Plans** into the [Dataverse](https://dataverse.org/) repository, automatically minting a **Digital Object Identifier (DOI)** for each deposited plan. Built as a Spring Boot microservice for seamless integration with OpenCDMP.
 
 ## Overview
 
-The **Dataverse** repository is a widely-used open-access research repository that offers DOI assignment for uploaded content. By using the **repository-deposit-dataverse** service, OpenCDMP users can directly deposit their DMPs into Dataverse, making the plans citeable and publicly available. The service supports both **system-based** and **user-based** depositions depending on the configuration.
+The **Dataverse** repository is a widely-used open-access research repository. By using the **repository-deposit-dataverse** service, OpenCDMP users can directly deposit their DMPs into Dataverse, making the plans citeable and publicly available. The service supports both **system-based** and **user-based** depositions depending on the configuration.
 
-- **Deposits**: Supported for DMPs into the Dataverse repository.
-- **DOI Minting**: Each successful deposition will mint a DOI through Dataverse.
+**Supported operations:**
+- ✅ Deposit plans to Dataverse
+- ✅ Automatic DOI minting
+- ✅ System-based and user-based depositions
 
-## Features
+---
+## Quick start
 
-- **Plan Deposits**: Deposit OpenCDMP plans into Dataverse.
-- **DOI Minting**: Automatically mint DOIs for each submitted plan.
-- **Spring Boot Microservice**: Built as a Spring Boot microservice for seamless integration with OpenCDMP.
+This service implements the following endpoints as per `DepositController`
 
-## Key Endpoints
+### API endpoints
 
-This service implements the following endpoints as per `DepositController`:
+- `POST /deposit` - Deposit a plan to Dataverse
+- `GET /configuration` - Get repository configuration
+- `GET /logo` - Get Dataverse logo (base64)
 
-### Deposit Endpoint
+### Example
 
-- **POST `/deposit`**: Deposits a plan into Dataverse and returns the DOI.
-
+- **Deposit with System Access Token**
 ```bash
-POST /deposit
-{
-    "planDepositModel": { ... },
-    "authToken": "user_oauth2_access_token"
-}
+ # Uses a system-wide access token configured by the service.
+ # No user action is required.
+
+ POST /deposit
+  {
+    "planModel": {...},
+    "authInfo": {
+        "authToken": "system_access_token"
+    } 
+  }
 ```
 
-### Configuration Endpoint
-
-- **GET `/configuration`**: Returns the repository's configuration for Dataverse.
-
+- **Deposit with user access token (from OpenCDMP profile settings)**
 ```bash
-GET /configuration
+ # The user has stored their Dataverse access token in their OpenCDMP profile settings (see https://opencdmp.github.io/user-guide/profile-settings/#external-plugin-settings).
+ # The token is retrieved from the saved user credential.
+ # This token is persistent and remains valid until the user updates it in their profile.
+
+ POST /deposit
+  {
+    "planModel": {...},
+    "authInfo": {
+        "authToken": null
+        "authFields": [
+            {
+                "code": "dataverse-access-token"
+                "textValue": "user_access_token"
+            }
+        ]
+    } 
+  }
 ```
 
-### Logo Endpoint
 
-- **GET `/logo`**: Returns the Dataverse logo in base64 format if available.
-
+- **Deposit a new version of an existing plan**
 ```bash
-GET /logo
+ # Same as case 1 (system token).
+ # previousDOI is mandatory to indicate that this is a new version of an existing deposit in this repository.
+
+ POST /deposit
+  {
+    "planModel": {
+        "id": "plan-uuid",
+        "title": "My Research Plan",
+        "description": "Plan content",
+        "previousDOI": "doi"
+        // more
+    },
+    "authInfo": {
+        "authToken": "system_access_token"
+    } 
+  }
 ```
+---
 
-## Example
+## Integration with OpenCDMP
 
-To deposit a plan into Dataverse and mint a DOI:
+To integrate this service with your OpenCDMP deployment, configure the deposit plugin in the OpenCDMP admin interface.
 
-```bash
-POST /deposit
-{
-    "planDepositModel": { ... },
-    "authToken": "user_oauth2_access_token"
-}
-```
+For detailed integration instructions, see see the [Dataverse Configuration](https://opencdmp.github.io/getting-started/configuration/backend/deposit/#dataverse) and the [OpenCDMP Deposit Service Authentication](https://opencdmp.github.io/getting-started/configuration/backend/#deposit-service-authentication).
+
+---
+
+## See Also
+
+For complete documentation on configuration, integration, and usage:
+
+- **Deposit Service Overview**: https://opencdmp.github.io/optional-services/deposit-services/
+- **User Guide**: [Depositing Plans](https://opencdmp.github.io/user-guide/plans/deposit-a-plan/)
+- **Developer Guide**: [Building Custom Deposit Services](https://opencdmp.github.io/developers/plugins/deposit/)
+
+---
 
 ## License
 
 This repository is licensed under the [EUPL 1.2 License](LICENSE).
 
-## Contact
+### Contact
 
-For questions or support regarding this implementation, please contact:
+For questions, support, or feedback:
 
 - **Email**: opencdmp at cite.gr
+- **GitHub Issues**: https://github.com/OpenCDMP/repository-deposit-dataverse/issues
+---
+
+*This service is part of the OpenCDMP ecosystem. For general OpenCDMP documentation, visit [opencdmp.github.io](https://opencdmp.github.io).*
