@@ -10,9 +10,16 @@ cache:
         expireAfterWriteMinutes: 10
         expireAfterAccessMinutes: 10
         refreshAfterWriteMinutes: 10
+      - names: [ "dataverseCitationSchema" ]
+        allowNullValues: true
+        initialCapacity: 10
+        maximumSize: 50
+        enableRecordStats: false
+        expireAfterWriteMinutes: 60
     mapCaches:
   logoByRepository:
     name: logoByRepository
     keyPattern: dataverseplugin_$repo$:v0
-    
-    
+  dataverse-citation-schema:
+    name: dataverseCitationSchema
+    keyPattern: dataverse_citation_schema_$repositoryUrl$:v0

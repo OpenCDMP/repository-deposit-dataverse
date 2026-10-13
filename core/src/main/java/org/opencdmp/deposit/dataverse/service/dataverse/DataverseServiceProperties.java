@@ -20,7 +20,13 @@ public class DataverseServiceProperties {
 
     private String funderReferenceCode;
 
+    private String grantReferenceCode;
+
     private String researcherReferenceCode;
+
+    private String defaultSubject;
+
+    private String specifiedMetadataLanguage;
 
     private int maxInMemorySizeInBytes;
 
@@ -80,6 +86,14 @@ public class DataverseServiceProperties {
         this.funderReferenceCode = funderReferenceCode;
     }
 
+    public String getGrantReferenceCode() {
+        return grantReferenceCode;
+    }
+
+    public void setGrantReferenceCode(String grantReferenceCode) {
+        this.grantReferenceCode = grantReferenceCode;
+    }
+
     public String getResearcherReferenceCode() {
         return researcherReferenceCode;
     }
@@ -88,11 +102,27 @@ public class DataverseServiceProperties {
         this.researcherReferenceCode = researcherReferenceCode;
     }
 
+    public String getDefaultSubject() {
+        return defaultSubject;
+    }
+
+    public void setDefaultSubject(String defaultSubject) {
+        this.defaultSubject = defaultSubject;
+    }
+
     public int getMaxInMemorySizeInBytes() {
         return maxInMemorySizeInBytes;
     }
 
     public void setMaxInMemorySizeInBytes(int maxInMemorySizeInBytes) {
         this.maxInMemorySizeInBytes = maxInMemorySizeInBytes;
+    }
+
+    public String getSpecifiedMetadataLanguage() {
+        return specifiedMetadataLanguage;
+    }
+
+    public void setSpecifiedMetadataLanguage(String specifiedMetadataLanguage) {
+        this.specifiedMetadataLanguage = specifiedMetadataLanguage;
     }
 }

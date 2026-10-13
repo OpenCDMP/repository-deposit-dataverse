@@ -1,6 +1,7 @@
 package org.opencdmp.deposit.dataverse.service.descriptiontemplatesearcher;
 
-import org.opencdmp.commonmodels.models.descriptiotemplate.*;
+import org.opencdmp.commonmodels.models.descriptiotemplate.DescriptionTemplateModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.*;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -36,16 +37,8 @@ public class TemplateFieldSearcherServiceImpl implements TemplateFieldSearcherSe
     }
 
     private FieldSetModel findFieldSet(DescriptionTemplateModel template, FieldModel fieldModel){
-        if (template == null || template.getDefinition() == null || template.getDefinition().getPages() == null) return null;
-        for (PageModel pageModel : template.getDefinition().getPages().stream().sorted(Comparator.comparing(PageModel::getOrdinal)).toList()){
-            FieldSetModel fieldSet = this.findFieldSet(pageModel, fieldModel);
-            if (fieldSet != null) return fieldSet;
-        }
-        return null;
-    }
-    private FieldSetModel findFieldSet(PageModel pageModel, FieldModel fieldModel){
-        if (pageModel == null || pageModel.getSections() == null) return null;
-        for (SectionModel sectionModel : pageModel.getSections().stream().sorted(Comparator.comparing(SectionModel::getOrdinal)).toList()){
+        if (template == null || template.getDefinition() == null || template.getDefinition().getSections() == null) return null;
+        for (SectionModel sectionModel : template.getDefinition().getSections().stream().sorted(Comparator.comparing(SectionModel::getOrdinal)).toList()){
             FieldSetModel fieldSet = this.findFieldSet(sectionModel, fieldModel);
             if (fieldSet != null) return fieldSet;
         }

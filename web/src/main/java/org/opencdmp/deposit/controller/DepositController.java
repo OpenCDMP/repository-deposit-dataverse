@@ -3,6 +3,8 @@ package org.opencdmp.deposit.controller;
 import gr.cite.tools.auditing.AuditService;
 import gr.cite.tools.logging.LoggerService;
 import gr.cite.tools.logging.MapLogEntry;
+import org.opencdmp.commonmodels.models.deposit.DepositPreviewModel;
+import org.opencdmp.commonmodels.models.deposit.PreviewFieldOption;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.deposit.dataverse.audit.AuditableAction;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.AbstractMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -30,15 +33,36 @@ public class DepositController implements org.opencdmp.depositbase.repository.De
 	    this.auditService = auditService;
     }
 
+    public DepositPreviewModel preview(@RequestBody PlanDepositModel planDepositModel) {
+        logger.debug(new MapLogEntry("preview " + PlanModel.class.getSimpleName()).And("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null));
+
+        DepositPreviewModel preview = depositClient.preview(planDepositModel);
+
+        this.auditService.track(AuditableAction.Deposit_Preview, Map.ofEntries(
+                new AbstractMap.SimpleEntry<String, Object>("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null)
+        ));
+        return preview;
+    }
     public String deposit(@RequestBody PlanDepositModel planDepositModel) {
-        logger.debug(new MapLogEntry("deposit " + PlanModel.class.getSimpleName()).And("planDepositModel", planDepositModel));
+        logger.debug(new MapLogEntry("deposit " + PlanModel.class.getSimpleName()).And("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null));
 
         String doiId = depositClient.deposit(planDepositModel);
         
         this.auditService.track(AuditableAction.Deposit_Deposit, Map.ofEntries(
-                new AbstractMap.SimpleEntry<String, Object>("planDepositModel", planDepositModel)
+                new AbstractMap.SimpleEntry<String, Object>("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null)
         ));
         return doiId;
+    }
+
+    public List<PreviewFieldOption> searchVocabulary(@PathVariable("fieldCode") String fieldCode, @RequestParam(value = "like", required = false) String like) {
+        logger.debug(new MapLogEntry("searchVocabulary").And("fieldCode", fieldCode).And("like", like));
+
+        List<PreviewFieldOption> options = depositClient.searchVocabulary(fieldCode, like);
+
+        this.auditService.track(AuditableAction.Deposit_SearchVocabulary, Map.ofEntries(
+                new AbstractMap.SimpleEntry<String, Object>("fieldCode", fieldCode)
+        ));
+        return options;
     }
 
     public String authenticate(@RequestParam("authToken") String code) {

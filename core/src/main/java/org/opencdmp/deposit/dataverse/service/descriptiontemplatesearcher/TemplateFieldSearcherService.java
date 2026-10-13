@@ -1,8 +1,8 @@
 package org.opencdmp.deposit.dataverse.service.descriptiontemplatesearcher;
 
 import org.opencdmp.commonmodels.models.descriptiotemplate.DescriptionTemplateModel;
-import org.opencdmp.commonmodels.models.descriptiotemplate.FieldModel;
-import org.opencdmp.commonmodels.models.descriptiotemplate.FieldSetModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldSetModel;
 
 import java.util.List;
 

@@ -2,6 +2,7 @@ dataverse:
   licenseReferenceCode: ${DEPOSIT_DATAVERSE_LICENCES_CODE:licenses}
   organizationReferenceCode: ${DEPOSIT_DATAVERSE_ORGANIZATIONS_CODE:organisations}
   funderReferenceCode: ${DEPOSIT_DATAVERSE_FUNDERS_CODE:funders}
+  grantReferenceCode: ${DEPOSIT_DATAVERSE_GRANTS_CODE:grants}
   researcherReferenceCode: ${DEPOSIT_DATAVERSE_RESEARCHERS_CODE:researchers}
   maxInMemorySizeInBytes: 6554000
   depositConfiguration:
@@ -17,7 +18,172 @@ dataverse:
     redirect-uri:
     has-logo: ${DEPOSIT_DATAVERSE_HAS_LOGO:true}
     useSharedStorage: ${DEPOSIT_DATAVERSE_USE_SHARED_STORAGE:false}
+    supports-preview: ${DEPOSIT_DATAVERSE_SUPPORTS_PREVIEW:true}
+    uploaded-files:
+      - PlanDocument
+      - RdaJson
+      - SupportingFiles
     configuration-fields:
+      - code: publish-ways
+        type: 3
+        label: "Ways to publish"
+        group: "Who publishes"
+        description: "Which accounts users can publish under."
+        defaultValue: "both"
+        options:
+          - label: "The organisation's account and users' own accounts"
+            value: "both"
+          - label: "Only the organisation's account"
+            value: "organisation"
+          - label: "Only users' own accounts"
+            value: "own"
+      - code: publish-preselected
+        type: 3
+        label: "Preselected"
+        group: "Who publishes"
+        description: "The choice users see selected when both are allowed. Users with saved credentials always start on their own account."
+        defaultValue: "own"
+        options:
+          - label: "Users' own accounts"
+            value: "own"
+          - label: "The organisation's account"
+            value: "organisation"
+      - code: organisation-account-name
+        type: 0
+        label: "Organisation account name"
+        group: "Who publishes"
+        description: "What users see in “Publish as”. Empty: “The organisation's Dataverse account”."
+      - code: organisation-access-token
+        type: 0
+        label: "Access token"
+        group: "Organisation account"
+        description: "The API token of the Dataverse account to publish under. Empty: the installation's account is used."
+        authInfo: true
+      - code: collection
+        type: 0
+        label: "Dataverse collection"
+        group: "Dataverse record"
+        description: "The alias of the dataverse collection records are created in, unless a plan sets one. Empty: the installation's value."
+      - code: subject
+        type: 0
+        label: "Default subject"
+        group: "Dataverse record"
+        description: "The subject of records whose plan sets none; it must be a subject the Dataverse installation accepts. Empty: the installation's value."
+      - code: metadata-language
+        type: 0
+        label: "Metadata language"
+        group: "Dataverse record"
+        description: "The metadata language of records, as a language code the Dataverse installation accepts. Empty: the installation's value."
+      - code: licence
+        type: 0
+        label: "Licence"
+        group: "Dataverse record"
+        description: "The licence of records, as its name in the Dataverse installation (e.g. “CC BY 4.0”). A plan licence the installation offers wins. Empty: CC0 terms of use."
+      - code: contact-name
+        type: 0
+        label: "Contact name"
+        group: "Dataverse record"
+        description: "The point of contact of records whose plan names none. Dataverse requires one."
+      - code: contact-email
+        type: 0
+        label: "Contact e-mail"
+        group: "Dataverse record"
+        description: "The e-mail of the point of contact of records whose plan names none. Dataverse requires one."
+      - code: authors-from-members
+        type: 3
+        label: "Authors from plan members"
+        group: "Dataverse record"
+        description: "Which plan members are credited as authors."
+        defaultValue: "all"
+        options:
+          - { label: "Every member", value: "all" }
+          - { label: "Owners and editors", value: "contributors" }
+          - { label: "Owners only", value: "owners" }
+          - { label: "None (only what the blueprint maps)", value: "none" }
+      - code: link-public-plan
+        type: 3
+        label: "Link the public plan page"
+        group: "Dataverse record"
+        description: "Adds the plan's public OpenCDMP page to the record when the plan is public."
+        defaultValue: "true"
+        options:
+          - { label: "Yes", value: "true" }
+          - { label: "No", value: "false" }
+      - code: publish-mode
+        type: 3
+        label: "Publish mode"
+        group: "Dataverse record"
+        description: "Whether records are published right away or left as drafts to publish in Dataverse."
+        defaultValue: "publish"
+        options:
+          - { label: "Publish", value: "publish" }
+          - { label: "Leave as draft", value: "draft" }
+      - code: deposit-files
+        type: 7
+        label: "Files to deposit"
+        group: "Files"
+        description: "Which files are uploaded with the record. Empty: all of them."
+        options:
+          - { label: "Plan document", value: "PlanDocument" }
+          - { label: "Machine-actionable plan (RDA JSON)", value: "RdaJson" }
+          - { label: "Supporting files", value: "SupportingFiles" }
+      - code: restrict-files
+        type: 3
+        label: "Restrict files"
+        group: "Files"
+        description: "Uploads the files as restricted. Dataverse then needs request access or terms of access enabled to publish."
+        defaultValue: "false"
+        options:
+          - { label: "Yes", value: "true" }
+          - { label: "No", value: "false" }
+      - code: reference-type-organisations
+        type: 0
+        label: "Organisations"
+        group: "Reference types"
+        description: "The code of the reference type read as the authors' affiliations. Empty: the installation's value."
+      - code: reference-type-funders
+        type: 0
+        label: "Funders"
+        group: "Reference types"
+        description: "The code of the reference type read as funders. Empty: the installation's value."
+      - code: reference-type-grants
+        type: 0
+        label: "Grants"
+        group: "Reference types"
+        description: "The code of the reference type read as grants. Empty: the installation's value."
+      - code: reference-type-researchers
+        type: 0
+        label: "Researchers"
+        group: "Reference types"
+        description: "The code of the reference type read as researcher contributors. Empty: the installation's value."
+      - code: reference-type-licences
+        type: 0
+        label: "Licences"
+        group: "Reference types"
+        description: "The code of the reference type read as the plan's licence. Empty: the installation's value."
+      - code: review-hidden-sections
+        type: 7
+        label: "Hidden sections"
+        group: "Review"
+        description: "Sections users never see in the review. Values your plans map into them are still published."
+        options:
+          - { label: "Basic information", value: "basic-information" }
+          - { label: "Author", value: "authors" }
+          - { label: "Description", value: "descriptions" }
+          - { label: "Subject", value: "subjects" }
+          - { label: "Point of Contact", value: "contacts" }
+          - { label: "Contributors", value: "contributors" }
+          - { label: "Funding", value: "funding" }
+          - { label: "Related Publication", value: "publications" }
+          - { label: "Keywords", value: "keywords" }
+          - { label: "Identifiers", value: "identifiers" }
+      - code: review-locked
+        type: 7
+        label: "Values users can't change"
+        group: "Review"
+        description: "These settings show in the review as set by the organisation, and users' edits to them are ignored."
+        options:
+          - { label: "Default subject", value: "subject" }
     user-configuration-fields:
       - code: dataverse-access-token
         type: 0
@@ -27,5 +193,7 @@ dataverse:
       - PluginDefault
       - AuthInfoFromUserProfile
   alias: ${DEPOSIT_DATAVERSE_HOST}
+  defaultSubject: ${DEPOSIT_DATAVERSE_DEFAULT_SUBJECT}
+  specifiedMetadataLanguage: ${DEPOSIT_DATAVERSE_SPECIFIED_METADATA_LANGUAGE}
   domain: ${OPENCDMP_DOMAIN}
   logo: ${DEPOSIT_DATAVERSE_LOGO_PATH:classpath:dataverse.png}

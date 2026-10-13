@@ -7,7 +7,17 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class DataverseDataset {
 
+    private String metadataLanguage;
+
     private DatasetVersion datasetVersion;
+
+    public String getMetadataLanguage() {
+        return metadataLanguage;
+    }
+
+    public void setMetadataLanguage(String metadataLanguage) {
+        this.metadataLanguage = metadataLanguage;
+    }
 
     public DatasetVersion getDatasetVersion() {
         return datasetVersion;
