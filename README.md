@@ -73,6 +73,12 @@ For each deposit, the service uses the first of these Dataverse tokens that is s
 
 OpenCDMP decides which accounts a user may publish under, and never falls back to the organisation's or the installation's account when a user chose their own. See [Publishing accounts and files](https://opencdmp.github.io/optional-services/deposit-services/#publishing-accounts-and-files).
 
+### The account a deposit used
+
+Dataverse accepts a new version of a dataset only from an account allowed to edit it, which is usually the account that deposited the first version. After a deposit under a user's own account, OpenCDMP calls `POST /api/deposit/account` with the same credentials, and the service reads the token's Dataverse user from `GET <DEPOSIT_DATAVERSE_URL>users/:me`, with the token in the `X-Dataverse-key` header. It returns the user's numeric id and a name to show: the display name, otherwise the first and last name, otherwise the `@username` identifier, with the email when Dataverse returns one. OpenCDMP keeps them with the plan's persistent identifier and names that account when a later version is published. It never asks for the organisation's account, so that account's Dataverse identity is not stored or shown to users.
+
+The service returns nothing when Dataverse does not answer or does not recognise the token, and the deposit is not affected.
+
 ## Register with OpenCDMP
 
 Register the service for the whole installation in the configuration of the API service, or for one organisation under **Settings > Plugins > Add plugin**. Use the plugin id `dataverse`, and register a PDF and an RDA JSON transformer with it. See [Registering plugin services](https://opencdmp.github.io/deployment/configuration/plugin-services/) and [Organisation plugins](https://opencdmp.github.io/administering/tenant-management/plugins/).
@@ -86,6 +92,7 @@ All endpoints are under `/api/deposit`. They accept only a Bearer token from the
 | `POST /api/deposit` | Deposit a plan and return the dataset's persistent identifier |
 | `POST /api/deposit/preview` | Return the metadata that would be deposited, as an editable form |
 | `GET /api/deposit/vocab/{fieldCode}?like=` | Search the vocabulary behind a review field |
+| `POST /api/deposit/account` | Return the Dataverse account that a deposit's credentials belong to (see [The account a deposit used](#the-account-a-deposit-used)) |
 | `GET /api/deposit/configuration` | Return the service's `DepositConfiguration` |
 | `GET /api/deposit/logo` | Return the Dataverse logo, Base64-encoded |
 

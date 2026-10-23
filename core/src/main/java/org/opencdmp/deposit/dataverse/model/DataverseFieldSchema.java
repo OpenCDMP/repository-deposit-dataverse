@@ -12,6 +12,8 @@ public class DataverseFieldSchema {
     private final boolean required;
     private Map<String, Map<String,Object>> childFields;
     private List<String> controlledVocabularyValues;
+    private String type;
+    private String displayName;
 
     public DataverseFieldSchema(String typeClass, boolean multiple, boolean required, Map<String, Map<String,Object>> childFields) {
         this.typeClass = typeClass;
@@ -50,5 +52,22 @@ public class DataverseFieldSchema {
 
     public void setControlledVocabularyValues(List<String> controlledVocabularyValues) {
         this.controlledVocabularyValues = controlledVocabularyValues;
+    }
+
+    /** The installation's field type (TEXT, TEXTBOX, URL, EMAIL, DATE, INT, FLOAT, NONE), which Dataverse validates values by. */
+    public String getType() {
+        return type;
+    }
+
+    public void setType(String type) {
+        this.type = type;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
     }
 }

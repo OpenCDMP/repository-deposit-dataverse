@@ -1,6 +1,11 @@
 package org.opencdmp.deposit.dataverse.service.dataverse;
 
 
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.opencdmp.deposit.dataverse.validation.DataverseErrors;
+import org.opencdmp.deposit.dataverse.validation.DataverseDatasetValidator;
+import gr.cite.tools.exception.MyValidationException;
 import gr.cite.tools.exception.MyApplicationException;
 import gr.cite.tools.logging.LoggerService;
 import gr.cite.tools.logging.MapLogEntry;
@@ -15,6 +20,7 @@ import org.opencdmp.deposit.dataverse.model.DataverseFieldSchema;
 import org.opencdmp.deposit.dataverse.model.builder.DataverseBuilder;
 import org.opencdmp.deposit.dataverse.model.builder.DataversePreviewMapper;
 import org.opencdmp.deposit.dataverse.service.storage.FileStorageService;
+import org.opencdmp.depositbase.repository.DepositAccount;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
 import org.opencdmp.depositbase.repository.DepositPluginSettings;
 import org.opencdmp.depositbase.repository.DepositPreviewMergeHelper;
@@ -28,8 +34,6 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -69,17 +73,19 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
     private final ResourceLoader resourceLoader;
     private final DataversePreviewMapper dataversePreviewMapper;
     private final DataverseSchemaCacheService schemaCacheService;
+    private final DataverseDatasetValidator datasetValidator;
 
     private byte[] logo;;
 
     @Autowired
-    public DataverseDepositServiceImpl(DataverseServiceProperties dataverseServiceProperties, DataverseBuilder mapper, FileStorageService storageService, ResourceLoader resourceLoader, DataversePreviewMapper dataversePreviewMapper, DataverseSchemaCacheService schemaCacheService){
+    public DataverseDepositServiceImpl(DataverseServiceProperties dataverseServiceProperties, DataverseBuilder mapper, FileStorageService storageService, ResourceLoader resourceLoader, DataversePreviewMapper dataversePreviewMapper, DataverseSchemaCacheService schemaCacheService, DataverseDatasetValidator datasetValidator){
         this.dataverseServiceProperties = dataverseServiceProperties;
         this.dataverseBuilder = mapper;
 	    this.storageService = storageService;
         this.resourceLoader = resourceLoader;
         this.dataversePreviewMapper = dataversePreviewMapper;
         this.schemaCacheService = schemaCacheService;
+        this.datasetValidator = datasetValidator;
         this.dataverseServiceProperties.getDepositConfiguration().setSemantics(DataverseSemanticsManifest.get());
         this.logo = null;
     }
@@ -142,14 +148,12 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
                     return depositNewVersion(planDepositModel, previousDOI, token);
                 }
 
-            } catch (HttpClientErrorException | HttpServerErrorException ex) {
+            } catch (WebClientResponseException ex) {
                 logger.error(ex.getMessage(), ex);
-                Map<String, String> parsedException = objectMapper.readValue(ex.getResponseBodyAsString(), Map.class);
-                try {
-                    throw new IOException(parsedException.get("message"), ex);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+                throw this.toException(ex.getStatusCode().is4xxClientError(), ex.getResponseBodyAsString(), ex.getStatusText());
+            } catch (HttpStatusCodeException ex) {
+                logger.error(ex.getMessage(), ex);
+                throw this.toException(ex.getStatusCode().is4xxClientError(), ex.getResponseBodyAsString(), ex.getStatusText());
             }
 
         }
@@ -164,6 +168,8 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         Map<String, DataverseFieldSchema> schema = this.fetchCitationSchema(token);
         DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token));
         this.dataversePreviewMapper.applyOverrides(dataset,schema,planDepositModel.getEditedFields(), planDepositModel.getEditedGroups(), settings);
+        boolean publish = !PUBLISH_MODE_DRAFT.equals(settings.text(SETTING_PUBLISH_MODE));
+        this.failOnInvalidValues(dataset, schema, publish);
 
         String url = this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "dataverses/" + this.dataverseBuilder.buildDataverseIdentifier(planDepositModel.getPlanModel(), settings) + "/datasets?doNotValidate=true";
 
@@ -179,9 +185,44 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         response = (Map<String, Object>) response.get("data");
         String doi = String.valueOf(response.get("persistentId"));
 
-        this.uploadFiles(planDepositModel.getPlanModel(), doi, token, settings);
-        if (!PUBLISH_MODE_DRAFT.equals(settings.text(SETTING_PUBLISH_MODE))) this.publish(doi, token);
+        try {
+            this.uploadFiles(planDepositModel.getPlanModel(), doi, token, settings);
+            if (publish) this.publish(doi, token);
+        } catch (RuntimeException ex) {
+            // a never-published dataset goes with its draft, so nothing is left behind in the dataverse
+            this.deleteDraft(doi, token);
+            throw ex;
+        }
         return doi;
+    }
+
+    private void failOnInvalidValues(DataverseDataset dataset, Map<String, DataverseFieldSchema> schema, boolean checkRequired) {
+        Map<String, List<String>> problems = this.datasetValidator.validate(dataset, schema, checkRequired);
+        if (!problems.isEmpty()) throw DataverseErrors.exception(DataverseErrors.INVALID_VALUES, problems);
+    }
+
+    private void deleteDraft(String doi, String token) {
+        String url = this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "datasets/:persistentId/versions/:draft?persistentId=" + doi;
+        try {
+            this.getWebClient().delete().uri(url).headers(httpHeaders -> httpHeaders.set("X-Dataverse-key", token)).retrieve().toBodilessEntity().block();
+        } catch (Exception e) {
+            logger.warn(new MapLogEntry("Could not remove the Dataverse draft").And("persistentId", doi).And("error", e.getMessage()));
+        }
+    }
+
+    /** Dataverse's answer as the user should see it: a validation error when it refused the values, otherwise its message. */
+    private RuntimeException toException(boolean clientError, String body, String statusText) {
+        String message = null;
+        try {
+            JsonNode json = objectMapper.readTree(body);
+            if (json.path("message").isString()) message = json.path("message").asString();
+        } catch (Exception ignored) {
+            // not a JSON answer
+        }
+        if (message == null || message.isBlank()) message = statusText;
+        String described = DataverseErrors.describe(message);
+        if (!clientError) return new MyApplicationException("The repository could not take the deposit: " + described);
+        return new MyValidationException(described.startsWith(DataverseErrors.INVALID_VALUES) ? described : "The repository refused the deposit: " + described);
     }
 
     private void uploadFiles(PlanModel planModel, String doi, String token, DepositPluginSettings settings) {
@@ -263,6 +304,7 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel, this.getConfiguration());
         DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token));
         this.dataversePreviewMapper.applyOverrides(dataset,schema, planDepositModel.getEditedFields(), planDepositModel.getEditedGroups(), settings);
+        this.failOnInvalidValues(dataset, schema, true);
 
         String url = this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "datasets/:persistentId/versions/:draft?persistentId=" + previousDOI;
 
@@ -277,18 +319,24 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
 
         if (response == null) throw new MyApplicationException("cannot create new draft version");
 
-        JsonNode jsonNode = objectMapper.convertValue(response, JsonNode.class);
-        JsonNode files = jsonNode.path("data").path("files");
+        try {
+            JsonNode jsonNode = objectMapper.convertValue(response, JsonNode.class);
+            JsonNode files = jsonNode.path("data").path("files");
 
-        if (files.isArray()) {
-            for (JsonNode file : files) {
-                int fileId = file.path("dataFile").path("id").asInt();
-                this.deleteFile(fileId, token);
+            if (files.isArray()) {
+                for (JsonNode file : files) {
+                    int fileId = file.path("dataFile").path("id").asInt();
+                    this.deleteFile(fileId, token);
+                }
             }
-        }
 
-        this.uploadFiles(planDepositModel.getPlanModel(), previousDOI, token, settings);
-        if (!PUBLISH_MODE_DRAFT.equals(settings.text(SETTING_PUBLISH_MODE))) this.publish(previousDOI, token);
+            this.uploadFiles(planDepositModel.getPlanModel(), previousDOI, token, settings);
+            if (!PUBLISH_MODE_DRAFT.equals(settings.text(SETTING_PUBLISH_MODE))) this.publish(previousDOI, token);
+        } catch (RuntimeException ex) {
+            // removing the new draft version leaves the dataset as it was published
+            this.deleteDraft(previousDOI, token);
+            throw ex;
+        }
         return previousDOI;
     }
 
@@ -317,6 +365,45 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         return this.dataverseServiceProperties.getDepositConfiguration();
     }
     
+    @Override
+    public DepositAccount account(PlanDepositModel planDepositModel) {
+        DepositConfiguration depositConfiguration = this.getConfiguration();
+        if (depositConfiguration == null || planDepositModel == null) return null;
+
+        String token = this.grabAuthenticationToken(planDepositModel);
+        if (token == null || token.isBlank()) return null;
+
+        try {
+            // the token goes in the header, not the URL, because the request logger prints URLs
+            Map<String, Object> response = this.getWebClient().get().uri(depositConfiguration.getRepositoryUrl() + "users/:me").headers(httpHeaders -> {
+                httpHeaders.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+                httpHeaders.set("X-Dataverse-key", token);
+            }).exchangeToMono(mono -> mono.statusCode().isError() ? mono.createException().flatMap(Mono::error) : mono.bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})).block();
+            if (response == null || !(response.get("data") instanceof Map<?, ?> me)) return null;
+
+            Object id = me.get("id") != null ? me.get("id") : me.get("identifier");
+            if (id == null) return null;
+
+            String displayName = me.get("displayName") instanceof String value && !value.isBlank() ? value : null;
+            if (displayName == null) {
+                String fullName = ((me.get("firstName") instanceof String first ? first : "") + " " + (me.get("lastName") instanceof String last ? last : "")).trim();
+                if (!fullName.isBlank()) displayName = fullName;
+            }
+            String username = me.get("identifier") instanceof String value && !value.isBlank() ? value : null;
+            String email = me.get("email") instanceof String value && !value.isBlank() ? value : null;
+            String name = displayName != null ? displayName : username != null ? username : email;
+            if (name != null && email != null && !name.equals(email)) name = name + " (" + email + ")";
+
+            DepositAccount account = new DepositAccount();
+            account.setId(id.toString());
+            account.setName(name);
+            return account;
+        } catch (Exception ex) {
+            logger.error("could not read the Dataverse account of the deposit", ex);
+            return null;
+        }
+    }
+
     @Override
     public String authenticate(String code){
         return null;
@@ -386,7 +473,10 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
             );
             // controlledVocabularyValues sits one level up from "childFields", directly on the field node
             List<String> controlledVocabularyValues  = objectMapper.convertValue(field.path("controlledVocabularyValues"),new TypeReference<List<String>>() {} );
-            schema.put(entry.getKey(), new DataverseFieldSchema(typeClass, multiple, required, childFields, controlledVocabularyValues));
+            DataverseFieldSchema fieldSchema = new DataverseFieldSchema(typeClass, multiple, required, childFields, controlledVocabularyValues);
+            fieldSchema.setType(field.path("type").asText(null));
+            fieldSchema.setDisplayName(field.path("displayName").asText(null));
+            schema.put(entry.getKey(), fieldSchema);
         });
 
         return schema;
@@ -412,10 +502,11 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
     private static ExchangeFilterFunction logResponse() {
         return ExchangeFilterFunction.ofResponseProcessor(response -> {
             if (response.statusCode().isError()) {
-                return response.mutate().build().bodyToMono(String.class)
-                    .flatMap(body -> {
+                // reading the body consumes it, so the response passed on gets it back for the caller to read Dataverse's message
+                return response.bodyToMono(String.class).defaultIfEmpty("")
+                    .map(body -> {
                         logger.error(new MapLogEntry("Response").And("method", response.request().getMethod().toString()).And("url", response.request().getURI()).And("status", response.statusCode().toString()).And("body", body));
-                        return Mono.just(response);
+                        return response.mutate().body(body).build();
                     });
             }
             return Mono.just(response);

@@ -11,5 +11,6 @@ public class AuditableAction {
     public static final EventId Deposit_GetLogo = new EventId(1003, "Deposit_GetLogo");
     public static final EventId Deposit_Preview = new EventId(1004,"Deposit_Preview");
     public static final EventId Deposit_SearchVocabulary = new EventId(1005, "Deposit_SearchVocabulary");
+    public static final EventId Deposit_Account = new EventId(1006, "Deposit_Account");
 
 }

@@ -7,6 +7,7 @@ import org.opencdmp.commonmodels.models.deposit.DepositPreviewModel;
 import org.opencdmp.commonmodels.models.deposit.PreviewFieldOption;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.deposit.dataverse.audit.AuditableAction;
+import org.opencdmp.depositbase.repository.DepositAccount;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
 import org.opencdmp.deposit.dataverse.service.dataverse.DataverseDepositService;
 import org.opencdmp.depositbase.repository.PlanDepositModel;
@@ -63,6 +64,15 @@ public class DepositController implements org.opencdmp.depositbase.repository.De
                 new AbstractMap.SimpleEntry<String, Object>("fieldCode", fieldCode)
         ));
         return options;
+    }
+
+    public DepositAccount account(@RequestBody PlanDepositModel planDepositModel) {
+        logger.debug(new MapLogEntry("account"));
+
+        DepositAccount account = depositClient.account(planDepositModel);
+
+        this.auditService.track(AuditableAction.Deposit_Account);
+        return account;
     }
 
     public String authenticate(@RequestParam("authToken") String code) {
