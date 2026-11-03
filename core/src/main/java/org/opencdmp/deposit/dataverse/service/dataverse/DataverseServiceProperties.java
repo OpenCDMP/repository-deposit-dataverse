@@ -28,6 +28,8 @@ public class DataverseServiceProperties {
 
     private String specifiedMetadataLanguage;
 
+    private String datasetType;
+
     private int maxInMemorySizeInBytes;
 
     public String getLogo() {
@@ -124,5 +126,13 @@ public class DataverseServiceProperties {
 
     public void setSpecifiedMetadataLanguage(String specifiedMetadataLanguage) {
         this.specifiedMetadataLanguage = specifiedMetadataLanguage;
+    }
+
+    public String getDatasetType() {
+        return datasetType;
+    }
+
+    public void setDatasetType(String datasetType) {
+        this.datasetType = datasetType;
     }
 }

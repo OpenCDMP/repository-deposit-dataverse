@@ -15,6 +15,7 @@ import org.opencdmp.commonmodels.models.plan.PlanContactModel;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldSetModel;
 import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.RadioBoxDataModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.ReferenceTypeDataModel;
 import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.SelectDataModel;
 import org.opencdmp.commonmodels.models.plandescriptionfields.FieldModel;
 import org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetItemModel;
@@ -22,6 +23,7 @@ import org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinition
 import org.opencdmp.commonmodels.models.planreference.PlanReferenceModel;
 import org.opencdmp.commonmodels.models.reference.ReferenceFieldModel;
 import org.opencdmp.commonmodels.models.reference.ReferenceModel;
+import org.opencdmp.commonmodels.models.referencetype.ReferenceTypeDefinitionModel;
 import org.opencdmp.commonmodels.models.referencetype.ReferenceTypeFieldModel;
 import org.opencdmp.commonmodels.models.referencetype.ReferenceTypeModel;
 import org.opencdmp.deposit.dataverse.model.*;
@@ -70,6 +72,10 @@ public class DataverseBuilder {
     private static final String SEMANTIC_DATAVERSE_ALTERNATIVE_URL = "dataverse.dataset.alternative_url";
     private static final String SEMANTIC_DATAVERSE_DATE_OF_DEPOSIT = "dataverse.dataset.date_of_deposit";
     private static final String SEMANTIC_DATAVERSE_NOTES = "dataverse.dataset.notes";
+    private static final String SEMANTIC_DATAVERSE_DATASET_TYPE = "dataverse.dataset.type";
+
+    /** The type Dataverse creates a dataset with when none is sent, and the only one a collection allows unless it lists others. */
+    public static final String DEFAULT_DATASET_TYPE = "dataset";
 
     private static final String SEMANTIC_DATAVERSE_AUTHOR_NAME = "dataverse.author.name";
     private static final String SEMANTIC_DATAVERSE_AUTHOR_AFFILIATION = "dataverse.author.affiliation";
@@ -83,6 +89,8 @@ public class DataverseBuilder {
     private static final String SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE = "dataverse.related_publication.relation_type";
     private static final String SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION = "dataverse.related_publication.citation";
     private static final String SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL = "dataverse.related_publication.url";
+    private static final List<String> SEMANTIC_DATAVERSE_RELATED_PUBLICATION_KEYS = List.of(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE,
+            SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL);
 
     private static final String SEMANTIC_DATAVERSE_PUBLICATION_TYPE_PREFIX = "dataverse.publication.type.";
     private static final String SEMANTIC_DATAVERSE_PUBLICATION_RELATION_TYPE_PREFIX = "dataverse.publication.relation_type.";
@@ -114,14 +122,25 @@ public class DataverseBuilder {
         return vocabularyLabel.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "");
     }
 
-    /** dataverseLicences: the installation's active licences, read only when the plan has a licence reference. */
-    public DataverseDataset build(PlanModel planModel, Map<String, DataverseFieldSchema> schema, DepositPluginSettings settings, List<Map<String, Object>> dataverseLicences) {
+    /**
+     * dataverseLicences: the installation's active licences, read only when the plan has a licence reference.
+     * allowedDatasetTypes: the names of the dataset types the target collection allows, or null when they are unknown.
+     */
+    public DataverseDataset build(PlanModel planModel, Map<String, DataverseFieldSchema> schema, DepositPluginSettings settings, List<Map<String, Object>> dataverseLicences, Collection<String> allowedDatasetTypes) {
         DataverseDataset dataset = new DataverseDataset();
 
         if (planModel == null) return dataset;
 
         String metadataLanguage = settings.text(DataverseDepositServiceImpl.SETTING_METADATA_LANGUAGE, this.dataverseServiceProperties.getSpecifiedMetadataLanguage());
         if (metadataLanguage != null && !metadataLanguage.isBlank()) dataset.setMetadataLanguage(metadataLanguage);
+
+        // a type the collection does not allow would fail the whole deposit, so it falls back to the installation's,
+        // then is left out, so Dataverse creates a plain "dataset"
+        List<String> planDatasetTypes = this.applyListValue(planModel, SEMANTIC_DATAVERSE_DATASET_TYPE);
+        String datasetType = planDatasetTypes.stream().map(type -> allowedDatasetType(type, allowedDatasetTypes)).filter(Objects::nonNull).findFirst().orElse(null);
+        if (datasetType == null && !planDatasetTypes.isEmpty()) logger.warn("Dataset types the collection does not allow: " + planDatasetTypes);
+        if (datasetType == null) datasetType = allowedDatasetType(this.dataverseServiceProperties.getDatasetType(), allowedDatasetTypes);
+        dataset.setDatasetType(datasetType);
 
         DatasetVersion version = new DatasetVersion();
         DataSetMetadataBlock metadataBlock = new DataSetMetadataBlock();
@@ -193,6 +212,13 @@ public class DataverseBuilder {
         return dataset;
     }
 
+    /** The type as the collection names it, or null when it does not allow it; any non-blank type when what it allows is unknown. */
+    private static String allowedDatasetType(String type, Collection<String> allowedDatasetTypes) {
+        if (type == null || type.isBlank()) return null;
+        if (allowedDatasetTypes == null) return type.trim();
+        return allowedDatasetTypes.stream().filter(allowed -> allowed.equalsIgnoreCase(type.trim())).findFirst().orElse(null);
+    }
+
     private static CitationField citationField(Map<String, DataverseFieldSchema> schema, String typeName, String fallbackTypeClass, boolean fallbackMultiple, Object value) {
         DataverseFieldSchema s = schema != null ? schema.get(typeName) : null;
         String typeClass = s != null ? s.getTypeClass() : fallbackTypeClass;
@@ -212,8 +238,7 @@ public class DataverseBuilder {
                     List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(),  descriptionModel.getProperties().getFieldSets());
 
                     for (FieldModel valueField : valueFields) {
-                        String value = this.extractSchematicSingleValue(field, valueField);
-                        if (value != null) {
+                        for (String value : this.answerValues(field, valueField, SEMANTIC_DATAVERSE_DESCRIPTION)) {
                             citationFields.add(Map.of("dsDescriptionValue", new CitationField("dsDescriptionValue", FIELD_TYPE_CLASS_PRIMITIVE, false, value)));
                         }
                     }
@@ -228,8 +253,7 @@ public class DataverseBuilder {
             List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(),  planModel.getProperties().getFieldSets());
 
             for (FieldModel valueField : valueFields) {
-                String value = this.extractSchematicSingleValue(field, valueField);
-                if (value != null) {
+                for (String value : this.answerValues(field, valueField, SEMANTIC_DATAVERSE_DESCRIPTION)) {
                     citationFields.add(Map.of("dsDescriptionValue", new CitationField("dsDescriptionValue", FIELD_TYPE_CLASS_PRIMITIVE, false, value)));
                 }
             }
@@ -244,6 +268,7 @@ public class DataverseBuilder {
     private List<Map<String, CitationField>> buildAuthorsFields(PlanModel planModel, DepositPluginSettings settings){
         List<Map<String, CitationField>> fields = new ArrayList<>();
         if (planModel == null || planModel.getUsers() == null) return fields;
+        List<String> authorKeys = List.of(SEMANTIC_DATAVERSE_AUTHOR_NAME, SEMANTIC_DATAVERSE_AUTHOR_AFFILIATION);
 
         List<String> organizations = new ArrayList<>();
         List<ReferenceModel> planOrganizations = this.getReferenceModelOfType(planModel, settings.text(DataverseDepositServiceImpl.SETTING_REFERENCE_TYPE_ORGANISATIONS, dataverseServiceProperties.getOrganizationReferenceCode()));
@@ -262,9 +287,8 @@ public class DataverseBuilder {
         if (planModel.getDescriptions() != null) {
             for (DescriptionModel descriptionModel: planModel.getDescriptions()){
 
-                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), List.of(
-                        SEMANTIC_DATAVERSE_AUTHOR_NAME, SEMANTIC_DATAVERSE_AUTHOR_AFFILIATION))) {
-                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, descriptionModel.getProperties().getFieldSets());
+                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), authorKeys)) {
+                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, descriptionModel.getProperties().getFieldSets(), authorKeys);
                     for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                         Map<String, CitationField> map = new HashMap<>();
 
@@ -277,9 +301,8 @@ public class DataverseBuilder {
             }
         }
 
-        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), List.of(
-                SEMANTIC_DATAVERSE_AUTHOR_NAME, SEMANTIC_DATAVERSE_AUTHOR_AFFILIATION))) {
-            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, planModel.getProperties().getFieldSets());
+        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), authorKeys)) {
+            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, planModel.getProperties().getFieldSets(), authorKeys);
             for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                 Map<String, CitationField> map = new HashMap<>();
 
@@ -392,11 +415,9 @@ public class DataverseBuilder {
                         List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(),  descriptionModel.getProperties().getFieldSets());
 
                         for (FieldModel valueField : valueFields) {
-                            Map<String, CitationField> map = new HashMap<>();
-                            map.put("contributorType", new CitationField("contributorType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, contributorType));
-
-                            String value = this.extractSchematicSingleValue(field, valueField);
-                            if (value != null) {
+                            for (String value : this.answerValues(field, valueField, semanticCode)) {
+                                Map<String, CitationField> map = new HashMap<>();
+                                map.put("contributorType", new CitationField("contributorType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, contributorType));
                                 map.put("contributorName", new CitationField("contributorName", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
                                 citationFields.add(map);
                             }
@@ -415,11 +436,9 @@ public class DataverseBuilder {
                 List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(),  planModel.getProperties().getFieldSets());
 
                 for (FieldModel valueField : valueFields) {
-                    Map<String, CitationField> map = new HashMap<>();
-                    map.put("contributorType", new CitationField("contributorType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, contributorType));
-
-                    String value = this.extractSchematicSingleValue(field, valueField);
-                    if (value != null) {
+                    for (String value : this.answerValues(field, valueField, semanticCode)) {
+                        Map<String, CitationField> map = new HashMap<>();
+                        map.put("contributorType", new CitationField("contributorType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, contributorType));
                         map.put("contributorName", new CitationField("contributorName", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
                         citationFields.add(map);
                     }
@@ -461,6 +480,7 @@ public class DataverseBuilder {
     private List<Map<String, CitationField>> buildContactFields(PlanModel planModel, DepositPluginSettings settings){
         List<Map<String, CitationField>> fields = new ArrayList<>();
         if (planModel == null || planModel.getProperties() == null) return fields;
+        List<String> contactKeys = List.of(SEMANTIC_DATAVERSE_CONTACT_NAME, SEMANTIC_DATAVERSE_CONTACT_EMAIL, SEMANTIC_DATAVERSE_CONTACT_AFFILIATION);
 
         if (planModel.getProperties().getContacts() != null) {
             for (PlanContactModel planContactModel: planModel.getProperties().getContacts()) {
@@ -475,9 +495,8 @@ public class DataverseBuilder {
         if (planModel.getDescriptions() != null) {
             for (DescriptionModel descriptionModel: planModel.getDescriptions()){
 
-                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), List.of(
-                        SEMANTIC_DATAVERSE_CONTACT_NAME, SEMANTIC_DATAVERSE_CONTACT_EMAIL, SEMANTIC_DATAVERSE_CONTACT_AFFILIATION))) {
-                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, descriptionModel.getProperties().getFieldSets());
+                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), contactKeys)) {
+                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, descriptionModel.getProperties().getFieldSets(), contactKeys);
                     for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                         Map<String, CitationField> map = new HashMap<>();
 
@@ -491,9 +510,8 @@ public class DataverseBuilder {
             }
         }
 
-        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), List.of(
-                SEMANTIC_DATAVERSE_CONTACT_NAME, SEMANTIC_DATAVERSE_CONTACT_EMAIL, SEMANTIC_DATAVERSE_CONTACT_AFFILIATION))) {
-            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, planModel.getProperties().getFieldSets());
+        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), contactKeys)) {
+            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, planModel.getProperties().getFieldSets(), contactKeys);
             for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                 Map<String, CitationField> map = new HashMap<>();
 
@@ -532,15 +550,15 @@ public class DataverseBuilder {
                         List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(),  descriptionModel.getProperties().getFieldSets());
 
                         for (FieldModel valueField : valueFields) {
-                            Map<String, CitationField> map = new HashMap<>();
-                            map.put("publicationIDType", new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, identifierType));
+                            for (String value : this.answerValues(field, valueField, semanticCode)) {
+                                Map<String, CitationField> map = new HashMap<>();
+                                map.put("publicationIDType", new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, identifierType));
+                                map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
 
-                            String value = this.extractSchematicSingleValue(field, valueField);
-                            if (value != null) map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
-
-                            String relationType = this.findPublicationRelationType(field, schema, publicationIDTypes);
-                            if (relationType != null) map.put("publicationRelationType", new CitationField("publicationRelationType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, relationType));
-                            if (value != null) citationFields.add(map);
+                                String relationType = this.findPublicationRelationType(field, schema, publicationIDTypes);
+                                if (relationType != null) map.put("publicationRelationType", new CitationField("publicationRelationType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, relationType));
+                                citationFields.add(map);
+                            }
                         }
                     }
                 }
@@ -548,15 +566,16 @@ public class DataverseBuilder {
                 for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), List.of(
                         SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER,
                         SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION))) {
+                    // own keys only: a reference type's publication keys are read per picked reference below
                     List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, descriptionModel.getProperties().getFieldSets());
                     for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                         Map<String, CitationField> map = new HashMap<>();
 
-                        this.buildControlledVocabularyFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE, "publication", "publicationIDType", schema);
-                        this.buildControlledVocabularyFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, "publication", "publicationRelationType", schema);
-                        this.buildCitationFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION, "publicationCitation", FIELD_TYPE_CLASS_PRIMITIVE);
-                        this.buildCitationFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER, "publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE);
-                        this.buildCitationFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL, "publicationURL", FIELD_TYPE_CLASS_PRIMITIVE);
+                        this.buildControlledVocabularyFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE, "publication", "publicationIDType", schema, false);
+                        this.buildControlledVocabularyFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, "publication", "publicationRelationType", schema, false);
+                        this.buildCitationFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION, "publicationCitation", FIELD_TYPE_CLASS_PRIMITIVE, false);
+                        this.buildCitationFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER, "publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false);
+                        this.buildCitationFieldFromFieldSetSemantic(map, descriptionModel.getDescriptionTemplate().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL, "publicationURL", FIELD_TYPE_CLASS_PRIMITIVE, false);
                         if (!map.isEmpty()) citationFields.add(map);
                     }
                 }
@@ -580,42 +599,8 @@ public class DataverseBuilder {
                             if (references == null) continue;
 
                             for (ReferenceModel reference : references) {
-                                List<ReferenceTypeFieldModel> semanticReferences = new ArrayList<>();
-
-                                ReferenceTypeModel type = reference.getType();
-                                if (type == null) continue;
-
-                                if (type.getDefinition() == null) continue;
-                                List<ReferenceTypeFieldModel> refTypeFields = type.getDefinition().getFields();
-
-                                if (refTypeFields == null) continue;
-
-                                for (ReferenceTypeFieldModel refField : refTypeFields) {
-                                    if (refField.getSemantics() == null) continue;
-
-                                    for (String semantics : refField.getSemantics()) {
-                                        if (semantics.equals(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER))
-                                            semanticReferences.add(refField);
-                                        if (semantics.equals(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE))
-                                            semanticReferences.add(refField);
-
-                                    }
-                                }
-
-                                if (!semanticReferences.isEmpty() && reference.getDefinition() != null && reference.getDefinition().getFields() != null) {
-                                    Map<String, CitationField> map = new HashMap<>();
-                                    for (ReferenceFieldModel defField : reference.getDefinition().getFields()) {
-                                        if (defField == null || defField.getCode() == null) continue;
-
-                                        for (ReferenceTypeFieldModel semanticRef : semanticReferences) {
-                                            if (semanticRef != null && semanticRef.getCode() != null && defField.getCode().equals(semanticRef.getCode())) {
-                                                if(semanticRef.getSemantics().contains(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER)) map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, defField.getValue()));
-                                                if(semanticRef.getSemantics().contains(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE) && this.isValidVocabularyValue(schema, "publication", "publicationIDType", defField.getValue())) map.put("publicationIDType",new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, defField.getValue()));
-                                            }
-                                        }
-                                    }
-                                    if (!map.isEmpty()) citationFields.add(map);
-                                }
+                                Map<String, CitationField> map = this.buildPublicationFromReference(reference, schema);
+                                if (!map.isEmpty()) citationFields.add(map);
                             }
                         }
                     }
@@ -634,30 +619,31 @@ public class DataverseBuilder {
                 List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(),  planModel.getProperties().getFieldSets());
 
                 for (FieldModel valueField : valueFields) {
-                    Map<String, CitationField> map = new HashMap<>();
-                    map.put("publicationIDType", new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, identifierType));
+                    for (String value : this.answerValues(field, valueField, semanticCode)) {
+                        Map<String, CitationField> map = new HashMap<>();
+                        map.put("publicationIDType", new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, identifierType));
+                        map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
 
-                    String value = this.extractSchematicSingleValue(field, valueField);
-                    if (value != null) map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
-
-                    String relationType = this.findPublicationRelationType(field, schema, publicationIDTypes);
-                    if (relationType != null) map.put("publicationRelationType", new CitationField("publicationRelationType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, relationType));
-                    if (value != null) citationFields.add(map);
+                        String relationType = this.findPublicationRelationType(field, schema, publicationIDTypes);
+                        if (relationType != null) map.put("publicationRelationType", new CitationField("publicationRelationType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, relationType));
+                        citationFields.add(map);
+                    }
                 }
             }
         }
         for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), List.of(
                 SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER,
                 SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION))) {
+            // own keys only: a reference type's publication keys are read per picked reference below
             List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, planModel.getProperties().getFieldSets());
             for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                 Map<String, CitationField> map = new HashMap<>();
 
-                this.buildControlledVocabularyFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE, "publication", "publicationIDType", schema);
-                this.buildControlledVocabularyFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, "publication", "publicationRelationType", schema);
-                this.buildCitationFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION, "publicationCitation", FIELD_TYPE_CLASS_PRIMITIVE);
-                this.buildCitationFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER, "publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE);
-                this.buildCitationFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL, "publicationURL", FIELD_TYPE_CLASS_PRIMITIVE);
+                this.buildControlledVocabularyFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE, "publication", "publicationIDType", schema, false);
+                this.buildControlledVocabularyFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE, "publication", "publicationRelationType", schema, false);
+                this.buildCitationFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION, "publicationCitation", FIELD_TYPE_CLASS_PRIMITIVE, false);
+                this.buildCitationFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER, "publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false);
+                this.buildCitationFieldFromFieldSetSemantic(map, planModel.getPlanBlueprint().getDefinition().getAllField(), fieldSet, propertyDefinitionFieldSetItemModel, SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL, "publicationURL", FIELD_TYPE_CLASS_PRIMITIVE, false);
                 if (!map.isEmpty()) citationFields.add(map);
             }
         }
@@ -682,42 +668,8 @@ public class DataverseBuilder {
                     if (references == null) continue;
 
                     for (ReferenceModel reference : references) {
-                        List<ReferenceTypeFieldModel> semanticReferences = new ArrayList<>();
-
-                        ReferenceTypeModel type = reference.getType();
-                        if (type == null) continue;
-
-                        if (type.getDefinition() == null) continue;
-                        List<ReferenceTypeFieldModel> refTypeFields = type.getDefinition().getFields();
-
-                        if (refTypeFields == null) continue;
-
-                        for (ReferenceTypeFieldModel refField : refTypeFields) {
-                            if (refField.getSemantics() == null) continue;
-
-                            for (String semantics : refField.getSemantics()) {
-                                if (semantics.equals(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER))
-                                    semanticReferences.add(refField);
-                                if (semantics.equals(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE))
-                                    semanticReferences.add(refField);
-
-                            }
-                        }
-
-                        if (!semanticReferences.isEmpty() && reference.getDefinition() != null && reference.getDefinition().getFields() != null) {
-                            Map<String, CitationField> map = new HashMap<>();
-                            for (ReferenceFieldModel defField : reference.getDefinition().getFields()) {
-                                if (defField == null || defField.getCode() == null) continue;
-
-                                for (ReferenceTypeFieldModel semanticRef : semanticReferences) {
-                                    if (semanticRef != null && semanticRef.getCode() != null && defField.getCode().equals(semanticRef.getCode())) {
-                                        if(semanticRef.getSemantics().contains(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER)) map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, defField.getValue()));
-                                        if(semanticRef.getSemantics().contains(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE) && this.isValidVocabularyValue(schema, "publication", "publicationIDType", defField.getValue())) map.put("publicationIDType",new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, defField.getValue()));
-                                    }
-                                }
-                            }
-                            if (!map.isEmpty()) citationFields.add(map);
-                        }
+                        Map<String, CitationField> map = this.buildPublicationFromReference(reference, schema);
+                        if (!map.isEmpty()) citationFields.add(map);
                     }
                 }
             }
@@ -730,14 +682,13 @@ public class DataverseBuilder {
     private List<Map<String, CitationField>> buildKeywordsFields(PlanModel planModel) {
         List<Map<String, CitationField>> citationFields = new ArrayList<>();
         if (planModel == null) return citationFields;
+        List<String> keywordKeys = List.of(SEMANTIC_DATAVERSE_KEYWORD_TERM, SEMANTIC_DATAVERSE_KEYWORD_TERM_URI, SEMANTIC_DATAVERSE_KEYWORD_VOCABULARY_NAME, SEMANTIC_DATAVERSE_KEYWORD_VOCABULARY_URL);
 
         if (planModel.getDescriptions() != null) {
             for (DescriptionModel descriptionModel: planModel.getDescriptions()){
 
-                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), List.of(
-                        SEMANTIC_DATAVERSE_KEYWORD_TERM, SEMANTIC_DATAVERSE_KEYWORD_TERM_URI,
-                        SEMANTIC_DATAVERSE_KEYWORD_VOCABULARY_NAME, SEMANTIC_DATAVERSE_KEYWORD_VOCABULARY_URL))) {
-                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, descriptionModel.getProperties().getFieldSets());
+                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), keywordKeys)) {
+                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, descriptionModel.getProperties().getFieldSets(), keywordKeys);
                     for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                         Map<String, CitationField> map = new HashMap<>();
 
@@ -752,10 +703,8 @@ public class DataverseBuilder {
             }
         }
 
-        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), List.of(
-                SEMANTIC_DATAVERSE_KEYWORD_TERM, SEMANTIC_DATAVERSE_KEYWORD_TERM_URI,
-                SEMANTIC_DATAVERSE_KEYWORD_VOCABULARY_NAME, SEMANTIC_DATAVERSE_KEYWORD_VOCABULARY_URL))) {
-            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, planModel.getProperties().getFieldSets());
+        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), keywordKeys)) {
+            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, planModel.getProperties().getFieldSets(), keywordKeys);
             for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                 Map<String, CitationField> map = new HashMap<>();
 
@@ -773,13 +722,13 @@ public class DataverseBuilder {
     private List<Map<String, CitationField>> buildOtherIdentifierFields(PlanModel planModel) {
         List<Map<String, CitationField>> citationFields = new ArrayList<>();
         if (planModel == null) return citationFields;
+        List<String> otherIdentifierKeys = List.of(SEMANTIC_DATAVERSE_OTHER_IDENTIFIER_AGENCY, SEMANTIC_DATAVERSE_OTHER_IDENTIFIER_IDENTIFIER);
 
         if (planModel.getDescriptions() != null) {
             for (DescriptionModel descriptionModel: planModel.getDescriptions()){
 
-                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), List.of(
-                        SEMANTIC_DATAVERSE_OTHER_IDENTIFIER_AGENCY, SEMANTIC_DATAVERSE_OTHER_IDENTIFIER_IDENTIFIER))) {
-                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, descriptionModel.getProperties().getFieldSets());
+                for (FieldSetModel fieldSet : this.templateFieldSearcherService.searchFieldSetsBySemantics(descriptionModel.getDescriptionTemplate(), otherIdentifierKeys)) {
+                    List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, descriptionModel.getProperties().getFieldSets(), otherIdentifierKeys);
                     for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                         Map<String, CitationField> map = new HashMap<>();
 
@@ -792,9 +741,8 @@ public class DataverseBuilder {
             }
         }
 
-        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), List.of(
-                SEMANTIC_DATAVERSE_OTHER_IDENTIFIER_AGENCY, SEMANTIC_DATAVERSE_OTHER_IDENTIFIER_IDENTIFIER))) {
-            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetValue(fieldSet, planModel.getProperties().getFieldSets());
+        for (FieldSetModel fieldSet : this.blueprintFieldSearcherService.searchFieldSetsBySemantics(planModel.getPlanBlueprint(), otherIdentifierKeys)) {
+            List<PropertyDefinitionFieldSetItemModel> propertyDefinitionFieldSetItemModels = this.findFieldSetRows(fieldSet, planModel.getProperties().getFieldSets(), otherIdentifierKeys);
             for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetItemModels) {
                 Map<String, CitationField> map = new HashMap<>();
 
@@ -807,19 +755,81 @@ public class DataverseBuilder {
         return citationFields;
     }
 
+    /**
+     * The related publication a picked reference makes through its reference type: the publication keys the type gives
+     * its fields, read from the reference's fields, then those it gives its id, name and description.
+     */
+    private Map<String, CitationField> buildPublicationFromReference(ReferenceModel reference, Map<String, DataverseFieldSchema> schema) {
+        Map<String, CitationField> map = new HashMap<>();
+        if (reference == null || reference.getType() == null || reference.getType().getDefinition() == null) return map;
+        ReferenceTypeDefinitionModel definition = reference.getType().getDefinition();
+
+        List<ReferenceTypeFieldModel> semanticReferences = new ArrayList<>();
+        if (definition.getFields() != null) {
+            for (ReferenceTypeFieldModel refField : definition.getFields()) {
+                if (refField.getSemantics() != null && refField.getSemantics().stream().anyMatch(SEMANTIC_DATAVERSE_RELATED_PUBLICATION_KEYS::contains)) semanticReferences.add(refField);
+            }
+        }
+        if (!semanticReferences.isEmpty() && reference.getDefinition() != null && reference.getDefinition().getFields() != null) {
+            for (ReferenceFieldModel defField : reference.getDefinition().getFields()) {
+                if (defField == null || defField.getCode() == null) continue;
+
+                for (ReferenceTypeFieldModel semanticRef : semanticReferences) {
+                    if (semanticRef.getCode() == null || !defField.getCode().equals(semanticRef.getCode())) continue;
+                    for (String semantic : SEMANTIC_DATAVERSE_RELATED_PUBLICATION_KEYS) {
+                        if (semanticRef.getSemantics().contains(semantic)) this.putPublicationValue(map, semantic, defField.getValue(), schema);
+                    }
+                }
+            }
+        }
+        // the type's id, name and description carry keys too, so a reference without fields still makes one
+        for (String semantic : SEMANTIC_DATAVERSE_RELATED_PUBLICATION_KEYS) {
+            String value = ReferenceSemantics.systemValue(reference, definition, semantic);
+            if (value != null) this.putPublicationValue(map, semantic, value, schema);
+        }
+        return map;
+    }
+
+    private void putPublicationValue(Map<String, CitationField> map, String semantic, String value, Map<String, DataverseFieldSchema> schema) {
+        switch (semantic) {
+            case SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER -> map.put("publicationIDNumber", new CitationField("publicationIDNumber", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
+            case SEMANTIC_DATAVERSE_RELATED_PUBLICATION_IDENTIFIER_TYPE -> {
+                if (this.isValidVocabularyValue(schema, "publication", "publicationIDType", value)) map.put("publicationIDType", new CitationField("publicationIDType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, value));
+            }
+            case SEMANTIC_DATAVERSE_RELATED_PUBLICATION_RELATION_TYPE -> {
+                if (this.isValidVocabularyValue(schema, "publication", "publicationRelationType", value)) map.put("publicationRelationType", new CitationField("publicationRelationType", FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, value));
+            }
+            case SEMANTIC_DATAVERSE_RELATED_PUBLICATION_CITATION -> {
+                if (value != null && !value.isBlank()) map.put("publicationCitation", new CitationField("publicationCitation", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
+            }
+            case SEMANTIC_DATAVERSE_RELATED_PUBLICATION_URL -> {
+                if (value != null && !value.isBlank()) map.put("publicationURL", new CitationField("publicationURL", FIELD_TYPE_CLASS_PRIMITIVE, false, value));
+            }
+            default -> {
+            }
+        }
+    }
+
     private void buildCitationFieldFromFieldSetSemantic(Map<String, CitationField> map, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldModels, FieldSetModel fieldSet,
                                                         PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel,
                                                         String semantic, String citationFieldName, String typeClass) {
-        FieldModel fieldValue = this.findValueFieldBySemantic(fieldSet, propertyDefinitionFieldSetItemModel, semantic);
+        this.buildCitationFieldFromFieldSetSemantic(map, fieldModels, fieldSet, propertyDefinitionFieldSetItemModel, semantic, citationFieldName, typeClass, true);
+    }
+
+    /** throughType: false to read only the inputs carrying the key themselves, not those whose reference type gives it. */
+    private void buildCitationFieldFromFieldSetSemantic(Map<String, CitationField> map, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldModels, FieldSetModel fieldSet,
+                                                        PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel,
+                                                        String semantic, String citationFieldName, String typeClass, boolean throughType) {
+        FieldModel fieldValue = this.findValueFieldBySemantic(fieldSet, propertyDefinitionFieldSetItemModel, semantic, throughType);
         if (fieldValue != null) {
             org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field = fieldModels.stream().filter(x-> x.getId().equals(fieldValue.getId())).findFirst().orElse(null);
-            String value = this.extractSchematicSingleValue(field, fieldValue);
+            String value = this.extractSchematicSingleValue(field, fieldValue, semantic);
             if (value != null) map.put(citationFieldName, new CitationField(citationFieldName, typeClass, false, value));
         }
     }
 
     /**
-     * Same as {@link #buildCitationFieldFromFieldSetSemantic(Map, List, FieldSetModel, PropertyDefinitionFieldSetItemModel, String, String, String)},
+     * Same as {@link #buildCitationFieldFromFieldSetSemantic(Map, List, FieldSetModel, PropertyDefinitionFieldSetItemModel, String, String, String, boolean)},
      * for a controlled-vocabulary child field (rootName.citationFieldName): the plan's free-text value is
      * checked against the live schema vocabulary before being written, since Dataverse rejects the whole
      * deposit if a controlled-vocabulary field carries a value the target instance's schema does not
@@ -827,11 +837,11 @@ public class DataverseBuilder {
      */
     private void buildControlledVocabularyFieldFromFieldSetSemantic(Map<String, CitationField> map, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldModels, FieldSetModel fieldSet,
                                                         PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel,
-                                                        String semantic, String rootName, String citationFieldName, Map<String, DataverseFieldSchema> schema) {
-        FieldModel fieldValue = this.findValueFieldBySemantic(fieldSet, propertyDefinitionFieldSetItemModel, semantic);
+                                                        String semantic, String rootName, String citationFieldName, Map<String, DataverseFieldSchema> schema, boolean throughType) {
+        FieldModel fieldValue = this.findValueFieldBySemantic(fieldSet, propertyDefinitionFieldSetItemModel, semantic, throughType);
         if (fieldValue == null) return;
         org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field = fieldModels.stream().filter(x-> x.getId().equals(fieldValue.getId())).findFirst().orElse(null);
-        String value = this.extractSchematicSingleValue(field, fieldValue);
+        String value = this.extractSchematicSingleValue(field, fieldValue, semantic);
         if (value != null && this.isValidVocabularyValue(schema, rootName, citationFieldName, value)) {
             map.put(citationFieldName, new CitationField(citationFieldName, FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, false, value));
         }
@@ -916,7 +926,7 @@ public class DataverseBuilder {
 
         //plan blueprint semantics
         List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(semanticCode, planModel.getPlanBlueprint().getDefinition().getAllField());
-        Set<String> values = extractSchematicValues(fieldsWithSemantics, planModel.getProperties().getFieldSets());
+        Set<String> values = extractSchematicValues(fieldsWithSemantics, planModel.getProperties().getFieldSets(), semanticCode);
 
         if (!values.isEmpty()) {
             fields.addAll(values.stream().toList());
@@ -926,7 +936,7 @@ public class DataverseBuilder {
             //description template
             for (DescriptionModel descriptionModel: planModel.getDescriptions()) {
                 fieldsWithSemantics = this.findSchematicValues(semanticCode, descriptionModel.getDescriptionTemplate().getDefinition().getAllField());
-                values = extractSchematicValues(fieldsWithSemantics, descriptionModel.getProperties().getFieldSets());
+                values = extractSchematicValues(fieldsWithSemantics, descriptionModel.getProperties().getFieldSets(), semanticCode);
                 if (!values.isEmpty()) {
                     fields.addAll(values.stream().toList());
                 }
@@ -936,28 +946,47 @@ public class DataverseBuilder {
         return fields;
     }
 
+    /** The inputs carrying the key, then the reference inputs whose type gives it, so an input's own key comes first. */
     private List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> findSchematicValues(String relatedId, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields){
-        return fields.stream().filter(x-> x.getSemantics() != null && x.getSemantics().contains(relatedId)).toList();
+        return Stream.concat(fields.stream().filter(x-> x.getSemantics() != null && x.getSemantics().contains(relatedId)), fields.stream().filter(x -> ReferenceSemantics.throughType(x, relatedId))).toList();
     }
 
-    private Set<String> extractSchematicValues(List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields, Map<String, PropertyDefinitionFieldSetModel> fieldSets) {
+    private Set<String> extractSchematicValues(List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields, Map<String, PropertyDefinitionFieldSetModel> fieldSets, String semantic) {
         Set<String> values = new HashSet<>();
         for (org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field : fields) {
             if (field.getData() == null) continue;
             List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(), fieldSets);
             for (FieldModel valueField : valueFields) {
-                values.addAll(this.extractSchematicValue(field, valueField));
+                values.addAll(this.extractSchematicValue(field, valueField, semantic));
             }
         }
         return values;
     }
 
-    private String extractSchematicSingleValue(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, FieldModel valueField) {
-        Set<String> value = this.extractSchematicValue(field, valueField);
+    private String extractSchematicSingleValue(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, FieldModel valueField, String semantic) {
+        Set<String> value = this.extractSchematicValue(field, valueField, semantic);
         return !value.isEmpty() ? value.stream().findFirst().orElse(null): null;
     }
 
-    private Set<String> extractSchematicValue(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, FieldModel valueField) {
+    /** The values an answer adds: its first, as before, or one per picked reference when the key comes through the reference type. */
+    private List<String> answerValues(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, FieldModel valueField, String semantic) {
+        if (ReferenceSemantics.throughType(field, semantic)) return this.referenceTypeValues(field, valueField, semantic);
+        String value = this.extractSchematicSingleValue(field, valueField, semantic);
+        return value != null ? List.of(value) : List.of();
+    }
+
+    /** The id, name, description or field value each picked reference gives the key through the input's reference type. */
+    private List<String> referenceTypeValues(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, FieldModel valueField, String semantic) {
+        List<String> values = new ArrayList<>();
+        if (valueField == null || valueField.getReferences() == null || !(field.getData() instanceof ReferenceTypeDataModel data)) return values;
+        for (ReferenceModel referenceModel : valueField.getReferences()) {
+            String value = ReferenceSemantics.value(referenceModel, data.getReferenceType(), semantic);
+            if (value != null && !values.contains(value)) values.add(value);
+        }
+        return values;
+    }
+
+    private Set<String> extractSchematicValue(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, FieldModel valueField, String semantic) {
 
         Set<String> values = new HashSet<>();
 
@@ -1007,7 +1036,9 @@ public class DataverseBuilder {
                 }
             }
             case REFERENCE_TYPES -> {
-                if (valueField.getReferences() != null && !valueField.getReferences().isEmpty()) {
+                // through the type no definition fields are needed: the id, name or description can carry the key
+                if (ReferenceSemantics.throughType(field, semantic)) values.addAll(this.referenceTypeValues(field, valueField, semantic));
+                else if (valueField.getReferences() != null && !valueField.getReferences().isEmpty()) {
                     for (ReferenceModel referenceModel : valueField.getReferences()) {
                         if (referenceModel == null
                                 || referenceModel.getType() == null || referenceModel.getType().getCode() == null || referenceModel.getType().getCode().isBlank()
@@ -1039,9 +1070,87 @@ public class DataverseBuilder {
         return models;
     }
 
-    private org.opencdmp.commonmodels.models.plandescriptionfields.FieldModel findValueFieldBySemantic(FieldSetModel fieldSet, org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel, String semantic){
+    private org.opencdmp.commonmodels.models.plandescriptionfields.FieldModel findValueFieldBySemantic(FieldSetModel fieldSet, org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel, String semantic, boolean throughType){
         org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field = this.templateFieldSearcherService.findFieldBySemantic(fieldSet, semantic);
-        return field != null ? propertyDefinitionFieldSetItemModel.getFields().getOrDefault(field.getId(), null) : null;
+        if (field == null || !ReferenceSemantics.throughType(field, semantic)) return field != null ? propertyDefinitionFieldSetItemModel.getFields().getOrDefault(field.getId(), null) : null;
+        if (!throughType) return null;
+        // reference inputs giving the same key are alternatives: the one this row picked a reference in
+        for (org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel carrier : fieldSet.getAllField()) {
+            if (!ReferenceSemantics.carries(carrier, semantic)) continue;
+            FieldModel value = propertyDefinitionFieldSetItemModel.getFields().get(carrier.getId());
+            if (value != null && value.getReferences() != null && !value.getReferences().isEmpty()) return value;
+        }
+        return propertyDefinitionFieldSetItemModel.getFields().getOrDefault(field.getId(), null);
+    }
+
+    /**
+     * The answer rows of the field set, one per object their picked references make. A reference input giving keys only
+     * through its type makes an object per pick: inputs giving the same keys are alternatives, each pick a row of its
+     * own; inputs giving other keys complete it, one pick of each. Inputs carrying the keys themselves read as before.
+     */
+    private List<PropertyDefinitionFieldSetItemModel> findFieldSetRows(FieldSetModel fieldSetModel, Map<String, PropertyDefinitionFieldSetModel> fieldSets, List<String> semantics) {
+        List<PropertyDefinitionFieldSetItemModel> rows = new ArrayList<>();
+        for (PropertyDefinitionFieldSetItemModel item : this.findFieldSetValue(fieldSetModel, fieldSets)) rows.addAll(this.rowsPerPick(fieldSetModel, item, semantics));
+        return rows;
+    }
+
+    private List<PropertyDefinitionFieldSetItemModel> rowsPerPick(FieldSetModel fieldSet, PropertyDefinitionFieldSetItemModel item, List<String> semantics) {
+        List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> templateFields = fieldSet.getAllField();
+        if (item == null || item.getFields() == null || templateFields == null) return Collections.singletonList(item);
+        // a key an input of the set carries itself is read from that input, not through a reference type
+        Set<String> owned = templateFields.stream().filter(x -> x.getSemantics() != null).flatMap(x -> x.getSemantics().stream()).collect(Collectors.toSet());
+        List<Set<String>> keys = new ArrayList<>();
+        List<List<Map.Entry<String, ReferenceModel>>> alternatives = new ArrayList<>();
+        boolean several = false;
+        for (org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field : templateFields) {
+            if (!(field.getData() instanceof ReferenceTypeDataModel data)) continue;
+            Set<String> fieldKeys = new HashSet<>(ReferenceSemantics.keys(data.getReferenceType()));
+            fieldKeys.retainAll(semantics);
+            fieldKeys.removeAll(owned);
+            FieldModel stored = item.getFields().get(field.getId());
+            if (fieldKeys.isEmpty() || stored == null || stored.getReferences() == null) continue;
+            List<Map.Entry<String, ReferenceModel>> picks = stored.getReferences().stream().filter(Objects::nonNull).map(x -> Map.entry(field.getId(), x)).toList();
+            if (picks.isEmpty()) continue;
+            several |= picks.size() > 1;
+            List<Map.Entry<String, ReferenceModel>> merged = new ArrayList<>(picks);
+            for (int i = keys.size() - 1; i >= 0; i--) {
+                if (Collections.disjoint(keys.get(i), fieldKeys)) continue;
+                fieldKeys.addAll(keys.remove(i));
+                merged.addAll(0, alternatives.remove(i));
+            }
+            keys.add(fieldKeys);
+            alternatives.add(merged);
+        }
+        if (!several) return List.of(item);
+
+        List<Map<String, ReferenceModel>> combinations = new ArrayList<>(List.of(Map.of()));
+        for (List<Map.Entry<String, ReferenceModel>> alternative : alternatives) {
+            List<Map<String, ReferenceModel>> next = new ArrayList<>();
+            for (Map<String, ReferenceModel> combination : combinations) {
+                for (Map.Entry<String, ReferenceModel> pick : alternative) {
+                    Map<String, ReferenceModel> more = new LinkedHashMap<>(combination);
+                    more.put(pick.getKey(), pick.getValue());
+                    next.add(more);
+                }
+            }
+            combinations = next;
+        }
+        Set<String> picking = new HashSet<>();
+        alternatives.forEach(x -> x.forEach(y -> picking.add(y.getKey())));
+        List<PropertyDefinitionFieldSetItemModel> rows = new ArrayList<>();
+        for (Map<String, ReferenceModel> combination : combinations) {
+            PropertyDefinitionFieldSetItemModel row = new PropertyDefinitionFieldSetItemModel();
+            row.setOrdinal(item.getOrdinal());
+            row.setFields(new HashMap<>(item.getFields()));
+            for (String fieldId : picking) {
+                FieldModel only = new FieldModel();
+                only.setId(fieldId);
+                only.setReferences(combination.containsKey(fieldId) ? List.of(combination.get(fieldId)) : List.of());
+                row.getFields().put(fieldId, only);
+            }
+            rows.add(row);
+        }
+        return rows;
     }
 
     private List<PropertyDefinitionFieldSetItemModel> findFieldSetValue(FieldSetModel fieldSetModel, Map<String, PropertyDefinitionFieldSetModel> fieldSets){

@@ -33,6 +33,7 @@ public class DataversePreviewMapper {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
 
     private static final String FIELD_TITLE = "title";
+    private static final String FIELD_DATASET_TYPE = "datasetType";
     private static final String FIELD_SUBTITLE = "subtitle";
     private static final String FIELD_NOTES = "notesText";
     private static final String FIELD_ALTERNATIVE_URL = "alternativeURL";
@@ -79,12 +80,13 @@ public class DataversePreviewMapper {
             new PreviewFieldOption("Organization", "organizational"));
 
 
-    public DepositPreviewModel toPreview(DataverseDataset dataverseDataset ,  Map<String, DataverseFieldSchema> dataverseFieldSchemaMap, List<String> uploadFileNames, DepositPluginSettings settings){
+    /** datasetTypes: the dataset types the collection allows, as name to display name, or null when the review leaves the type out. */
+    public DepositPreviewModel toPreview(DataverseDataset dataverseDataset ,  Map<String, DataverseFieldSchema> dataverseFieldSchemaMap, List<String> uploadFileNames, DepositPluginSettings settings, Map<String, String> datasetTypes){
         DepositPreviewModel model = new DepositPreviewModel();
 
         model.setGroups(new ArrayList<>());
         if (uploadFileNames != null && !uploadFileNames.isEmpty()) model.getGroups().add(this.buildFilesGroup(uploadFileNames));
-        model.getGroups().add(buildBasicInformationGroup(dataverseDataset,dataverseFieldSchemaMap));
+        model.getGroups().add(buildBasicInformationGroup(dataverseDataset,dataverseFieldSchemaMap, datasetTypes));
         model.getGroups().add(buildAuthorGroup(dataverseDataset,dataverseFieldSchemaMap));
         model.getGroups().add(buildDescriptionGroup(dataverseDataset,dataverseFieldSchemaMap));
         model.getGroups().add(buildSubjectGroup(dataverseDataset,dataverseFieldSchemaMap, settings.isLocked(DataverseDepositServiceImpl.SETTING_SUBJECT)));
@@ -110,12 +112,20 @@ public class DataversePreviewMapper {
         return this.dateValue(typeName, citationField != null ? (String) citationField.getValue(): null);
     };
 
-    private PreviewFieldGroup buildBasicInformationGroup(DataverseDataset dataverseDataset, Map<String, DataverseFieldSchema> schema) {
+    private PreviewFieldGroup buildBasicInformationGroup(DataverseDataset dataverseDataset, Map<String, DataverseFieldSchema> schema, Map<String, String> datasetTypes) {
         PreviewFieldGroup group = this.buildGroup(GROUP_BASIC_INFORMATION, "Basic information");
         List<PreviewField> fields = group.getFields();
         List<CitationField> citationFields = dataverseDataset.getDatasetVersion().getMetadataBlocks().getCitation().getFields();
         PreviewField title = this.buildField(FIELD_TITLE, "Title", PreviewFieldType.Text, PreviewFieldSource.Mapped, this.isFieldRequired(schema, FIELD_TITLE), () -> resolvePreviewValue(citationFields, FIELD_TITLE));
         fields.add(title);
+        // shown only when the collection leaves a choice; a dataset sent without a type is created as a "dataset"
+        if (datasetTypes != null && datasetTypes.size() > 1) {
+            boolean defaultAllowed = datasetTypes.containsKey(DataverseBuilder.DEFAULT_DATASET_TYPE);
+            String datasetType = dataverseDataset.getDatasetType() != null ? dataverseDataset.getDatasetType() : defaultAllowed ? DataverseBuilder.DEFAULT_DATASET_TYPE : null;
+            PreviewField datasetTypeField = this.buildField(FIELD_DATASET_TYPE, "Dataset type", PreviewFieldType.Select, PreviewFieldSource.Mapped, !defaultAllowed, () -> this.textValue(FIELD_DATASET_TYPE, datasetType));
+            datasetTypeField.setOptions(datasetTypes.entrySet().stream().map(type -> new PreviewFieldOption(type.getValue(), type.getKey())).toList());
+            fields.add(datasetTypeField);
+        }
         fields.add(this.buildField(FIELD_ALTERNATIVE_URL,"Alternative URL", PreviewFieldType.Text, PreviewFieldSource.Mapped,false,() -> resolvePreviewValue(citationFields,FIELD_ALTERNATIVE_URL)));
         fields.add(this.buildField(FIELD_DATE_OF_DEPOSIT,"Deposit Date", PreviewFieldType.Date, PreviewFieldSource.Mapped,false,() -> resolvePreviewDateValue(citationFields,FIELD_DATE_OF_DEPOSIT)));
         fields.add(this.buildField(FIELD_SUBTITLE,"Subtitle", PreviewFieldType.Text, PreviewFieldSource.Mapped,false,() -> resolvePreviewValue(citationFields,FIELD_SUBTITLE)));
@@ -644,6 +654,8 @@ public class DataversePreviewMapper {
             case FIELD_SUBTITLE -> this.grabOrCreateField(dataverseList, FIELD_SUBTITLE, FIELD_TYPE_CLASS_PRIMITIVE, false).setValue(value.getTextValue());
             case FIELD_NOTES -> this.grabOrCreateField(dataverseList, FIELD_NOTES, FIELD_TYPE_CLASS_PRIMITIVE, false).setValue(value.getTextValue());
             case FIELD_SUBJECT -> this.grabOrCreateField(dataverseList, FIELD_SUBJECT, FIELD_TYPE_CLASS_CONTROLLED_VOCABULARY, true).setValue(value.getTextListValue());
+            // not a citation field: it sits beside datasetVersion, and the collection's check on it is the validator's
+            case FIELD_DATASET_TYPE -> dataverseDataset.setDatasetType(value.getTextValue() != null && !value.getTextValue().isBlank() ? value.getTextValue().trim() : null);
             default -> {
                 // read-only and unknown codes are ignored; unknown codes may come from a newer descriptor version
             }

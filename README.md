@@ -12,7 +12,7 @@ The service implements the [repository-deposit-base](https://github.com/OpenCDMP
 - Publishes the dataset right away, or leaves it as a draft to publish in Dataverse, as the organisation chooses
 - Lets users review and edit the citation metadata before it is published, with the controlled vocabularies of the target installation
 - Reads the required fields and vocabularies from the target installation's own citation metadata block
-- Fills Dataverse fields from the answers of the plan blueprint and asset templates, through [semantics](https://opencdmp.github.io/optional-services/deposit-services/dataverse-semantics/)
+- Fills Dataverse fields from the answers of the plan blueprint and asset templates, through [semantics](https://opencdmp.github.io/optional-services/deposit-services/dataverse-semantics/), including keys a reference input takes from its reference type (the picked reference's ID, name, description, or one of its fields)
 
 ## Requirements
 
@@ -59,6 +59,7 @@ The service reads its settings from environment variables or from `app-<PROFILE>
 | `DEPOSIT_DATAVERSE_ACCESS_TOKEN` | API token of the installation's Dataverse account |
 | `DEPOSIT_DATAVERSE_HOST` | Alias of the Dataverse collection that datasets are created in |
 | `DEPOSIT_DATAVERSE_SUPPORTS_PREVIEW` | Metadata review before publishing (default `true`) |
+| `DEPOSIT_DATAVERSE_DATASET_TYPE` | Dataset type that new datasets are created with, such as `outputmanagementplan`, when the plan does not set one the collection allows with `dataverse.dataset.type`. Empty, or a type the collection does not allow: Dataverse's default, `dataset` |
 | `STORAGE_PATH` | Folder of temporary and shared files |
 
 All variables, with defaults and examples, are in [Deposit services: Dataverse](https://opencdmp.github.io/deployment/configuration/backend/deposit/#dataverse); the authentication, logging and storage settings are in [Settings common to all plugin services](https://opencdmp.github.io/deployment/configuration/plugin-services/#settings-common-to-all-plugin-services). Each organisation can override the account and the record defaults in its [organisation settings](https://opencdmp.github.io/optional-services/deposit-services/#organisation-settings).
@@ -131,7 +132,7 @@ Fields are Mapped (filled in from the plan and editable, such as `title`, `subje
 | Group code | Contents |
 |---|---|
 | `files` | `files` (read-only): the names of the files the deposit will upload, when the platform provides them |
-| `basic-information` | `title`, `alternativeURL`, `dateOfDeposit`, `subtitle`, `notesText` |
+| `basic-information` | `title`, `datasetType` (select of the collection's dataset types, on a first deposit to a collection that allows more than one), `alternativeURL`, `dateOfDeposit`, `subtitle`, `notesText` |
 | `authors` | repeatable rows: `authorName`, `authorAffiliation`, `authorIdentifierScheme` (vocabulary select) |
 | `descriptions` | repeatable rows: `dsDescriptionValue` |
 | `subjects` | `subject` (controlled-vocabulary tags, vocabulary autocomplete) |
@@ -152,6 +153,8 @@ Each Dataverse installation can customise its citation metadata block. On every 
 - marks each group `required` from the top-level `isRequired` of its compound field;
 - builds the options of the controlled-vocabulary fields (`subject`, `contributorType`, `publicationIDType`, `publicationRelationType`) from the schema's `controlledVocabularyValues`;
 - leaves out a value built from the plan that is not in the installation's vocabulary, since Dataverse would reject the whole deposit with a 400 error.
+
+A first deposit also reads the target collection (`GET {repository-url}dataverses/{alias}`) for the dataset types it allows: its `allowedDatasetTypes`, or only `dataset` when it lists none, as Dataverse checks on create. A type from the plan or `DEPOSIT_DATAVERSE_DATASET_TYPE` that the collection does not allow is left out. A type the user picks that the collection does not allow, or no type for a collection that does not allow `dataset`, stops the deposit with a validation error. When the collection cannot be read, the type is sent unchecked. A new version never changes the type.
 
 On demo.dataverse.org, all five fields are required, and so are the groups `author`, `dsDescription` and `datasetContact`; `contributor`, `grantNumber`, `publication`, `keyword` and `otherId` are not. Another installation may require fewer, or none.
 

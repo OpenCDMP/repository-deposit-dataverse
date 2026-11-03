@@ -195,5 +195,6 @@ dataverse:
   alias: ${DEPOSIT_DATAVERSE_HOST}
   defaultSubject: ${DEPOSIT_DATAVERSE_DEFAULT_SUBJECT}
   specifiedMetadataLanguage: ${DEPOSIT_DATAVERSE_SPECIFIED_METADATA_LANGUAGE}
+  datasetType: ${DEPOSIT_DATAVERSE_DATASET_TYPE:}
   domain: ${OPENCDMP_DOMAIN}
   logo: ${DEPOSIT_DATAVERSE_LOGO_PATH:classpath:dataverse.png}

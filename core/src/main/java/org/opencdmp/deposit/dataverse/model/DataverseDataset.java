@@ -9,7 +9,17 @@ public class DataverseDataset {
 
     private String metadataLanguage;
 
+    private String datasetType;
+
     private DatasetVersion datasetVersion;
+
+    public String getDatasetType() {
+        return datasetType;
+    }
+
+    public void setDatasetType(String datasetType) {
+        this.datasetType = datasetType;
+    }
 
     public String getMetadataLanguage() {
         return metadataLanguage;

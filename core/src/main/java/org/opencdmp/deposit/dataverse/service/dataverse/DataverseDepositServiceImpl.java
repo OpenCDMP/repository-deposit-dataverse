@@ -111,13 +111,15 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         String token = grabAuthenticationToken(planDepositModel);
         DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel, this.getConfiguration());
         Map<String, DataverseFieldSchema> schema = this.fetchCitationSchema(token);
-        DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token));
-        List<String> uploadFileNames = new ArrayList<>();
         PlanModel planModel = planDepositModel.getPlanModel();
+        // a dataset's type is set only when it is created, so a new version's review leaves it out
+        Map<String, String> datasetTypes = planModel.getPreviousDOI() == null ? this.fetchAllowedDatasetTypes(this.dataverseBuilder.buildDataverseIdentifier(planModel, settings), token) : null;
+        DataverseDataset dataset = this.dataverseBuilder.build(planModel, schema, settings, this.fetchLicences(planModel, settings, token), datasetTypes != null ? datasetTypes.keySet() : null);
+        List<String> uploadFileNames = new ArrayList<>();
         if (planModel.getPdfFile() != null && planModel.getPdfFile().getFilename() != null) uploadFileNames.add(planModel.getPdfFile().getFilename());
         if (planModel.getRdaJsonFile() != null && planModel.getRdaJsonFile().getFilename() != null) uploadFileNames.add(planModel.getRdaJsonFile().getFilename());
         if (planModel.getSupportingFilesZip() != null && planModel.getSupportingFilesZip().getFilename() != null) uploadFileNames.add(planModel.getSupportingFilesZip().getFilename());
-        DepositPreviewModel preview = this.dataversePreviewMapper.toPreview(dataset, schema, uploadFileNames, settings);
+        DepositPreviewModel preview = this.dataversePreviewMapper.toPreview(dataset, schema, uploadFileNames, settings, datasetTypes);
         DepositPreviewMergeHelper.merge(preview, planDepositModel.getStoredFields(), planDepositModel.getStoredGroups());
         return preview;
     }
@@ -166,12 +168,14 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
     private String depositFirst(PlanDepositModel planDepositModel, String token) {
         DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel, this.getConfiguration());
         Map<String, DataverseFieldSchema> schema = this.fetchCitationSchema(token);
-        DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token));
+        String collection = this.dataverseBuilder.buildDataverseIdentifier(planDepositModel.getPlanModel(), settings);
+        Map<String, String> datasetTypes = this.fetchAllowedDatasetTypes(collection, token);
+        DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token), datasetTypes != null ? datasetTypes.keySet() : null);
         this.dataversePreviewMapper.applyOverrides(dataset,schema,planDepositModel.getEditedFields(), planDepositModel.getEditedGroups(), settings);
         boolean publish = !PUBLISH_MODE_DRAFT.equals(settings.text(SETTING_PUBLISH_MODE));
-        this.failOnInvalidValues(dataset, schema, publish);
+        this.failOnInvalidValues(dataset, schema, publish, datasetTypes != null ? datasetTypes.keySet() : null);
 
-        String url = this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "dataverses/" + this.dataverseBuilder.buildDataverseIdentifier(planDepositModel.getPlanModel(), settings) + "/datasets?doNotValidate=true";
+        String url = this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "dataverses/" + collection + "/datasets?doNotValidate=true";
 
         Map<String, Object> response = this.getWebClient().post().uri(url).headers(httpHeaders -> {
                     httpHeaders.set("X-Dataverse-key", token);
@@ -196,8 +200,8 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         return doi;
     }
 
-    private void failOnInvalidValues(DataverseDataset dataset, Map<String, DataverseFieldSchema> schema, boolean checkRequired) {
-        Map<String, List<String>> problems = this.datasetValidator.validate(dataset, schema, checkRequired);
+    private void failOnInvalidValues(DataverseDataset dataset, Map<String, DataverseFieldSchema> schema, boolean checkRequired, Collection<String> allowedDatasetTypes) {
+        Map<String, List<String>> problems = this.datasetValidator.validate(dataset, schema, checkRequired, allowedDatasetTypes);
         if (!problems.isEmpty()) throw DataverseErrors.exception(DataverseErrors.INVALID_VALUES, problems);
     }
 
@@ -302,9 +306,10 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
         Map<String, DataverseFieldSchema> schema = this.fetchCitationSchema(token);
 
         DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel, this.getConfiguration());
-        DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token));
+        // only the version is sent, so the dataset keeps the type it was created with
+        DataverseDataset dataset = this.dataverseBuilder.build(planDepositModel.getPlanModel(), schema, settings, this.fetchLicences(planDepositModel.getPlanModel(), settings, token), null);
         this.dataversePreviewMapper.applyOverrides(dataset,schema, planDepositModel.getEditedFields(), planDepositModel.getEditedGroups(), settings);
-        this.failOnInvalidValues(dataset, schema, true);
+        this.failOnInvalidValues(dataset, schema, true, null);
 
         String url = this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "datasets/:persistentId/versions/:draft?persistentId=" + previousDOI;
 
@@ -357,6 +362,36 @@ public class DataverseDepositServiceImpl implements DataverseDepositService {
             // installations before Dataverse 5.10 have no licences endpoint; the plan's licence is then not sent
             logger.warn("Could not read the Dataverse licences: " + e.getMessage());
             return List.of();
+        }
+    }
+
+    /**
+     * The dataset types the collection allows, as name to display name: its allowedDatasetTypes, or only "dataset"
+     * when it lists none, which is what Dataverse checks a new dataset against. Null when the collection could not be
+     * read, so the plan's type is sent unchecked.
+     */
+    private Map<String, String> fetchAllowedDatasetTypes(String collection, String token) {
+        if (collection == null || collection.isBlank()) return null;
+        try {
+            Map<String, Object> response = this.getWebClient().get().uri(this.dataverseServiceProperties.getDepositConfiguration().getRepositoryUrl() + "dataverses/" + collection)
+                    .headers(h -> h.set("X-Dataverse-key", token))
+                    .exchangeToMono(mono -> mono.statusCode().isError()
+                            ? mono.createException().flatMap(Mono::error)
+                            : mono.bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {}))
+                    .block();
+            if (response == null || !(response.get("data") instanceof Map<?, ?> data)) return null;
+            Map<String, String> types = new LinkedHashMap<>();
+            if (data.get("allowedDatasetTypes") instanceof List<?> allowed) {
+                for (Object item : allowed) {
+                    if (!(item instanceof Map<?, ?> type) || !(type.get("name") instanceof String name) || name.isBlank()) continue;
+                    types.put(name, type.get("displayName") instanceof String displayName && !displayName.isBlank() ? displayName : name);
+                }
+            }
+            if (types.isEmpty()) types.put(DataverseBuilder.DEFAULT_DATASET_TYPE, DataverseBuilder.DEFAULT_DATASET_TYPE);
+            return types;
+        } catch (Exception e) {
+            logger.warn("Could not read the dataset types of the Dataverse collection " + collection + ": " + e.getMessage());
+            return null;
         }
     }
 

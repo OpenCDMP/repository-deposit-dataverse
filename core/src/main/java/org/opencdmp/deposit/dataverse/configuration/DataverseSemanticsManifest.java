@@ -18,7 +18,8 @@ import java.util.List;
  * <p>
  * Every value is "can use": the deposit always writes the title (the plan's label) and fills the description,
  * subject, authors and contacts from the plan or the configuration, so nothing a template or blueprint leaves out
- * breaks it. Keys are read from blueprint and template inputs alike. The manifest is static: the instance's
+ * breaks it. Keys are read from blueprint and template inputs alike, and from a reference input whose reference type
+ * gives them to the picked references' id, name, description or fields. The manifest is static: the instance's
  * controlled vocabularies (subjects, contributor types, publication identifier and relation types) are only known
  * from its citation schema, so those values are described rather than listed, and the families of keys built from
  * them are published as prefixes.
@@ -48,7 +49,8 @@ public final class DataverseSemanticsManifest {
         usages.add(usage("dataverse.dataset.subject", "Subject", "Written as a subject; it must be a subject of the Dataverse instance, others are dropped.", "subject[]", SemanticValueFormat.Choice, true, "The organisation's default subject, else the installation's", null));
         usages.add(usage("dataverse.dataset.alternative_url", "Alternative URL", "Written as the alternative URL; the first answer is kept.", "alternativeURL", SemanticValueFormat.Uri, false, "The plan's public page, for a public plan, unless the organisation turned that off", null));
         usages.add(usage("dataverse.dataset.date_of_deposit", "Date of deposit", "Written as the date of deposit; a value that is not a yyyy-MM-dd date is dropped.", "dateOfDeposit", SemanticValueFormat.Date, false, null, null));
-        usages.add(usage("dataverse.identifier", "Dataverse", "The alias of the dataverse the dataset is created in; the first answer is kept.", "dataverses/{alias}/datasets", SemanticValueFormat.Text, false, "The organisation's Dataverse collection, else the installation's", null));
+        usages.add(usage("dataverse.dataset.type", "Dataset type", "Written as the type the dataset is created with (e.g. dataset, software, outputmanagementplan); the first answer the target collection allows is kept, others are dropped. Only the first version sets it.", "datasetType", SemanticValueFormat.Text, false, "The installation's dataset type, else Dataverse's \"dataset\"", null));
+        usages.add(usage("dataverse.identifier","Dataverse", "The alias of the dataverse the dataset is created in; the first answer is kept.", "dataverses/{alias}/datasets", SemanticValueFormat.Text, false, "The organisation's Dataverse collection, else the installation's", null));
 
         usages.add(usage("dataverse.author.name", "Author › Name", "Each answer row is added as an author, after the plan members credited as authors.", "author[].authorName", SemanticValueFormat.Text, false, "The plan members the organisation credits as authors", "dataverse.author"));
         usages.add(usage("dataverse.author.affiliation", "Author › Affiliation", "Written as the affiliation of the author of its answer row.", "author[].authorAffiliation", SemanticValueFormat.Text, false, "The plan's organisations, for the plan members credited as authors", "dataverse.author"));
@@ -57,14 +59,10 @@ public final class DataverseSemanticsManifest {
         usages.add(usage("dataverse.point_of_contact.email", "Point of contact › Email", "Written as the email of the contact of its answer row.", "datasetContact[].datasetContactEmail", SemanticValueFormat.Email, false, "The plan's contacts, else the organisation's contact e-mail", "dataverse.point_of_contact"));
         usages.add(usage("dataverse.point_of_contact.affiliation", "Point of contact › Affiliation", "Written as the affiliation of the contact of its answer row.", "datasetContact[].datasetContactAffiliation", SemanticValueFormat.Text, false, null, "dataverse.point_of_contact"));
 
-        SemanticKeyUsage publicationIdentifierType = usage("dataverse.related_publication.identifier_type", "Related publication › Identifier type", "Written as the identifier type of the publication; it must be a publication identifier type of the Dataverse instance, others are dropped.", "publication[].publicationIDType", SemanticValueFormat.Choice, false, null, "dataverse.related_publication");
-        publicationIdentifierType.setFromReferenceFields(true);
-        usages.add(publicationIdentifierType);
+        usages.add(usage("dataverse.related_publication.identifier_type", "Related publication › Identifier type", "Written as the identifier type of the publication; it must be a publication identifier type of the Dataverse instance, others are dropped.", "publication[].publicationIDType", SemanticValueFormat.Choice, false, null, "dataverse.related_publication"));
         usages.add(usage("dataverse.related_publication.relation_type", "Related publication › Relation type", "Written as the relation type of the publication; it must be a publication relation type of the Dataverse instance, others are dropped.", "publication[].publicationRelationType", SemanticValueFormat.Choice, false, null, "dataverse.related_publication"));
         usages.add(usage("dataverse.related_publication.citation", "Related publication › Citation", "Written as the citation of the publication.", "publication[].publicationCitation", SemanticValueFormat.Text, false, null, "dataverse.related_publication"));
-        SemanticKeyUsage publicationIdentifier = usage("dataverse.related_publication.identifier", "Related publication › Identifier", "Written as the identifier of the publication.", "publication[].publicationIDNumber", SemanticValueFormat.Text, false, null, "dataverse.related_publication");
-        publicationIdentifier.setFromReferenceFields(true);
-        usages.add(publicationIdentifier);
+        usages.add(usage("dataverse.related_publication.identifier", "Related publication › Identifier", "Written as the identifier of the publication.", "publication[].publicationIDNumber", SemanticValueFormat.Text, false, null, "dataverse.related_publication"));
         usages.add(usage("dataverse.related_publication.url", "Related publication › URL", "Written as the URL of the publication.", "publication[].publicationURL", SemanticValueFormat.Uri, false, null, "dataverse.related_publication"));
 
         usages.add(usage("dataverse.keyword.term", "Keyword › Term", "Written as the term of the keyword.", "keyword[].keywordValue", SemanticValueFormat.Text, false, null, "dataverse.keyword"));
@@ -91,6 +89,8 @@ public final class DataverseSemanticsManifest {
                 "Keys are dataverse.publication.relation_type.<type>, one per publication relation type of the Dataverse instance's citation schema, lowercased with anything not a letter or digit as _ (e.g. dataverse.publication.relation_type.iscitedby); put on the same input as a dataverse.publication.type key, it sets the relation type of the related publications that input adds. On its own it writes nothing. Types the instance does not have are ignored.",
                 "publication[].publicationRelationType", SemanticValueFormat.Text, false, null, null);
         publicationRelationType.setPrefix(true);
+        // a marker on the input itself, not a value a picked reference can give
+        publicationRelationType.setFromReferenceFields(false);
         usages.add(publicationRelationType);
 
         SemanticsManifest manifest = new SemanticsManifest(List.of(new SemanticVocabulary(PREFIX, "Dataverse (citation block)", false)), usages);
@@ -110,6 +110,8 @@ public final class DataverseSemanticsManifest {
         usage.setMultiple(multiple);
         usage.setFallback(fallback);
         usage.setObject(object);
+        // every value key is also read through the reference type of a reference input
+        usage.setFromReferenceFields(true);
         return usage;
     }
 

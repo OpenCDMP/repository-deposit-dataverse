@@ -5,6 +5,7 @@ import org.apache.commons.validator.routines.UrlValidator;
 import org.opencdmp.deposit.dataverse.model.CitationField;
 import org.opencdmp.deposit.dataverse.model.DataverseDataset;
 import org.opencdmp.deposit.dataverse.model.DataverseFieldSchema;
+import org.opencdmp.deposit.dataverse.model.builder.DataverseBuilder;
 import org.springframework.stereotype.Component;
 
 import java.text.ParseException;
@@ -26,6 +27,7 @@ public class DataverseDatasetValidator {
     private static final String TYPE_INT = "INT";
     private static final String TYPE_FLOAT = "FLOAT";
     private static final String NA_VALUE = "N/A";
+    private static final String DATASET_TYPE_LABEL = "Dataset type";
     private static final UrlValidator URL_VALIDATOR = new UrlValidator(new String[]{"http", "https", "ftp"}, UrlValidator.ALLOW_2_SLASHES);
 
     /** The review's group labels of the compound fields it shows, so a problem names the group the user edits. */
@@ -39,9 +41,19 @@ public class DataverseDatasetValidator {
             "keyword", "Keywords",
             "otherId", "Identifiers");
 
-    /** The problems by review label (e.g. "Point of Contact, row 2"), in dataset order; empty when the installation should accept it. */
-    public Map<String, List<String>> validate(DataverseDataset dataset, Map<String, DataverseFieldSchema> schema, boolean checkRequired) {
+    /**
+     * The problems by review label (e.g. "Point of Contact, row 2"), in dataset order; empty when the installation should accept it.
+     * allowedDatasetTypes: the dataset types the target collection allows, or null to leave the type to Dataverse.
+     */
+    public Map<String, List<String>> validate(DataverseDataset dataset, Map<String, DataverseFieldSchema> schema, boolean checkRequired, Collection<String> allowedDatasetTypes) {
         Map<String, List<String>> problems = new LinkedHashMap<>();
+        if (dataset != null && allowedDatasetTypes != null) {
+            // Dataverse creates a dataset sent without a type as a "dataset", and checks that against the collection too
+            String datasetType = dataset.getDatasetType() != null ? dataset.getDatasetType() : DataverseBuilder.DEFAULT_DATASET_TYPE;
+            if (!allowedDatasetTypes.contains(datasetType)) {
+                add(problems, DATASET_TYPE_LABEL, DATASET_TYPE_LABEL + " '" + datasetType + "' is not one the collection allows (" + String.join(", ", allowedDatasetTypes) + ").");
+            }
+        }
         List<CitationField> fields = dataset != null && dataset.getDatasetVersion() != null && dataset.getDatasetVersion().getMetadataBlocks() != null
                 && dataset.getDatasetVersion().getMetadataBlocks().getCitation() != null ? dataset.getDatasetVersion().getMetadataBlocks().getCitation().getFields() : null;
         if (fields == null || schema == null) return problems;
